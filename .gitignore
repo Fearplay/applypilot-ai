@@ -1,0 +1,89 @@
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+secrets/
+user_data/
+~/.applypilot/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Testing & type checkers
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Build artifacts (PyInstaller / Nuitka, optional later)
+*.spec
+build/
+dist/
+
+# Local app outputs (user-generated, may contain personal data)
+outputs/*
+!outputs/.gitkeep
+
+# Local user CV / personal docs (never commit)
+*.pdf
+*.docx
+*.doc
+!sample_data/*.pdf
+!sample_data/*.docx
+!docs/**/*.pdf
+
+# Local settings persisted by the app
+applypilot_settings.json
+.applypilot/
