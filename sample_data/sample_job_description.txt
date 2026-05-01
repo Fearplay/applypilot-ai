@@ -1,0 +1,62 @@
+QA Automation Engineer
+Company: DemoCorp s.r.o.
+Location: Prague, hybrid (2 days office)
+
+About the role
+==============
+We are looking for a QA Automation Engineer to take ownership of our
+end-to-end and API test automation. You will design, build and maintain
+automated test suites that run in CI on every pull request, and partner
+closely with our developers to keep release confidence high.
+
+Responsibilities
+================
+- Design, implement and maintain UI test automation in Playwright with
+  Python (pytest framework, Page Object Model).
+- Build and maintain API test automation with pytest + requests.
+- Integrate the test suites into our GitHub Actions CI pipelines and keep
+  them stable and fast.
+- Collaborate with developers to drive testability into the product
+  (testable IDs, data seeding, observability hooks).
+- Triage flaky tests, file high-quality defects in Jira and follow up on
+  their fixes.
+- Review test code from teammates and mentor junior testers.
+- Contribute to test strategy, exploratory testing sessions and release
+  go/no-go decisions.
+
+Required skills
+===============
+- 2+ years of test automation experience for web applications.
+- Solid Python (pytest, OOP, virtualenv, type hints).
+- Hands-on experience with Playwright, Selenium or Cypress.
+- Hands-on experience with API testing (Postman + automated checks with
+  pytest+requests, RestAssured or similar).
+- Comfortable with Git, pull requests and code review workflows.
+- Comfortable working with CI (GitHub Actions, GitLab CI or Jenkins).
+- SQL basics for verifying data behind the UI.
+
+Nice to have
+============
+- Docker for local + CI test environments.
+- Allure or similar reporting tooling.
+- Experience with performance / load testing (k6, JMeter).
+- Exposure to BDD (pytest-bdd, Cucumber).
+- Test strategy or QA lead experience.
+
+Tools we use
+============
+Python, Playwright, pytest, requests, Postman, Jira, Confluence,
+GitHub, GitHub Actions, Docker, PostgreSQL, Allure.
+
+What we offer
+=============
+- Hybrid working (2 days office in Prague, 3 days remote).
+- Flexible hours, 25 days holiday, MultiSport benefit.
+- Personal learning budget for courses and conferences.
+- Friendly engineering team that values testing as a first-class activity.
+
+How to apply
+============
+Send your CV and a short cover letter explaining what you would change
+about the way QA is usually done in product teams. We respond to every
+application within 5 working days.
