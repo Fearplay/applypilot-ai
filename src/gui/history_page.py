@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QFrame,
@@ -27,6 +27,8 @@ logger = logging.getLogger(__name__)
 
 
 class HistoryPage(QWidget):
+    open_in_app_requested = Signal(str)  # output_folder absolute path
+
     def __init__(self, settings: Settings, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._settings = settings
@@ -105,10 +107,17 @@ class HistoryPage(QWidget):
         refresh.clicked.connect(self.refresh)
         bar.addWidget(refresh)
         bar.addStretch(1)
-        open_btn = QPushButton("Open selected folder")
-        open_btn.setProperty("variant", "primary")
-        open_btn.clicked.connect(self._on_open_clicked)
-        bar.addWidget(open_btn)
+        open_folder_btn = QPushButton("Open selected folder")
+        open_folder_btn.clicked.connect(self._on_open_clicked)
+        bar.addWidget(open_folder_btn)
+        open_in_app_btn = QPushButton("Open in app")
+        open_in_app_btn.setProperty("variant", "primary")
+        open_in_app_btn.setToolTip(
+            "Re-load the saved markdown / HTML files into the Documents tab "
+            "without running the AI again."
+        )
+        open_in_app_btn.clicked.connect(self._on_open_in_app_clicked)
+        bar.addWidget(open_in_app_btn)
         layout.addLayout(bar)
 
     # ----------------------------------------------------------- public
@@ -128,14 +137,18 @@ class HistoryPage(QWidget):
             self._table.setItem(row, 3, score_item)
             self._table.setItem(row, 4, QTableWidgetItem(entry.output_folder))
 
-    def _on_open_clicked(self) -> None:
+    def _selected_folder(self) -> str | None:
         row = self._table.currentRow()
         if row < 0:
-            return
+            return None
         item = self._table.item(row, 4)
         if not item:
-            return
+            return None
         path = item.text()
+        return path or None
+
+    def _on_open_clicked(self) -> None:
+        path = self._selected_folder()
         if not path:
             return
         try:
@@ -143,6 +156,15 @@ class HistoryPage(QWidget):
             QDesktopServices.openUrl(QUrl.fromLocalFile(path))
         except Exception as exc:  # pragma: no cover
             logger.warning("Could not open folder: %s", exc)
+
+    def _on_open_in_app_clicked(self) -> None:
+        path = self._selected_folder()
+        if not path:
+            return
+        if not Path(path).exists():
+            logger.warning("History entry points to a missing folder: %s", path)
+            return
+        self.open_in_app_requested.emit(path)
 
 
 __all__ = ["HistoryPage"]

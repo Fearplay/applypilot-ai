@@ -43,7 +43,7 @@ from ..models.package import GeneratedApplicationPackage
 from ..services.cover_letter_generator import generate_cover_letter
 from ..services.export_service import export_package
 from ..services.gap_plan_generator import generate_skill_gap_plan
-from ..services.history_service import append_history
+from ..services.history_service import append_history, load_package_files
 from ..services.interview_generator import generate_interview_questions
 from ..services.match_engine import compute_match, needs_clarifying_questions
 from ..services.question_generator import generate_questions
@@ -101,11 +101,21 @@ class SettingsDialog(QDialog):
         layout.addWidget(title)
 
         info = QLabel(
-            "Adjust the active AI provider for this session. To make the "
-            "change permanent, also update <code>.env</code> in the project root."
+            "<b>Tip:</b> this dialog only affects the <b>current session</b>. "
+            "Restarting the app reloads everything from <code>.env</code> in "
+            "the project root - copy <code>.env.example</code> to "
+            "<code>.env</code> and edit <code>AI_PROVIDER</code>, "
+            "<code>AI_API_KEY</code>, <code>AI_BASE_URL</code> and "
+            "<code>AI_MODEL</code> to make the change permanent."
         )
+        info.setTextFormat(Qt.RichText)
         info.setWordWrap(True)
-        info.setStyleSheet(f"color: {Tokens.text_muted}; font-size: 12px;")
+        info.setStyleSheet(
+            f"color: {Tokens.text}; font-size: 12px;"
+            f" background-color: {Tokens.surface_alt};"
+            f" border: 1px solid {Tokens.border};"
+            f" border-radius: 8px; padding: 10px 12px;"
+        )
         layout.addWidget(info)
 
         form = QFormLayout()
@@ -115,6 +125,19 @@ class SettingsDialog(QDialog):
         self._provider_combo.addItem(
             "openai_compatible (any compatible HTTP endpoint)",
             "openai_compatible",
+        )
+        self._provider_combo.setItemData(
+            0,
+            "Free, deterministic offline mode. Even with an API key filled in "
+            "below, leaving Provider on 'fake' keeps the demo - switch to "
+            "'openai_compatible' to actually call the API.",
+            Qt.ToolTipRole,
+        )
+        self._provider_combo.setItemData(
+            1,
+            "Calls the OpenAI-compatible /v1/chat/completions endpoint at the "
+            "Base URL below. Requires a valid API key.",
+            Qt.ToolTipRole,
         )
         if settings.ai_provider == "openai_compatible":
             self._provider_combo.setCurrentIndex(1)
@@ -270,6 +293,7 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(self._docs_page)
 
         self._history_page = HistoryPage(self._settings)
+        self._history_page.open_in_app_requested.connect(self._on_open_history_in_app)
         self._stack.addWidget(self._history_page)
 
         self.setStatusBar(QStatusBar())
@@ -565,6 +589,24 @@ class MainWindow(QMainWindow):
             on_finished=on_done,
             on_failed=self._on_workflow_failed,
         )
+
+    def _on_open_history_in_app(self, folder_path: str) -> None:
+        try:
+            payload = load_package_files(folder_path)
+        except OSError as exc:
+            QMessageBox.warning(self, "Could not load analysis", str(exc))
+            return
+        if not (payload.resume_md or payload.cover_letter_md or payload.match_report_md):
+            QMessageBox.information(
+                self,
+                "Folder is empty",
+                f"No analysis artefacts found in:\n{folder_path}",
+            )
+            return
+        self._docs_page.load_from_stored_analysis(payload)
+        self._sidebar.set_status("documents", "Loaded", "active")
+        self._sidebar.set_activity(f"Re-opened {Path(folder_path).name}")
+        self._goto("documents")
 
     def _on_workflow_failed(self, message: str) -> None:
         self.statusBar().clearMessage()

@@ -7,7 +7,7 @@ from src.models.match import (
     AnswersBundle,
     ClarifyingAnswer,
 )
-from src.services.evidence_checker import check_evidence
+from src.services.evidence_checker import _clean_snippet, check_evidence
 
 
 def _make_job(required, nice=None) -> JobPosting:
@@ -86,3 +86,53 @@ def test_skill_only_in_skills_section_is_low_confidence():
     # weak_evidence (no high/medium item exists).
     assert "Postman" in result.weak_evidence_skills
     assert all(item.confidence == "low" for item in result.items if item.skill == "Postman")
+
+
+def test_clean_snippet_strips_separator_lines():
+    raw = (
+        "Technical Skills\n"
+        "================\n"
+        "Languages: Python, JavaScript\n"
+        "Tools: pytest, Selenium"
+    )
+    cleaned = _clean_snippet(raw)
+    assert "================" not in cleaned
+    assert "====" not in cleaned
+    assert "Languages: Python, JavaScript" in cleaned
+
+
+def test_clean_snippet_collapses_multiple_blank_lines():
+    raw = "Line one\n\n\n\nLine two\n\n\nLine three"
+    cleaned = _clean_snippet(raw)
+    assert "\n\n" not in cleaned
+    assert cleaned.count("\n") == 2
+
+
+def test_clean_snippet_trims_to_limit_at_word_boundary():
+    raw = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda"
+    cleaned = _clean_snippet(raw, limit=20)
+    assert len(cleaned) <= 25  # 20 + 3 ellipsis + a tiny grace margin
+    assert cleaned.endswith("...")
+    # Should not chop a word in half.
+    assert " " in cleaned[:-3]
+
+
+def test_clean_snippet_handles_empty_input():
+    assert _clean_snippet("") == ""
+    assert _clean_snippet(None) == ""  # type: ignore[arg-type]
+
+
+def test_evidence_text_no_longer_contains_separator_lines():
+    job = _make_job(["Python"])
+    candidate = CandidateProfile(
+        full_name="Jane",
+        raw_cv_text=(
+            "Skills\n"
+            "======\n"
+            "Languages: Python, SQL\n"
+        ),
+    )
+    result = check_evidence(job, candidate)
+    python_items = [item for item in result.items if item.skill == "Python"]
+    assert python_items, "Python skill must produce an evidence item"
+    assert all("======" not in item.evidence_text for item in python_items)

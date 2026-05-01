@@ -12,6 +12,7 @@ For one application we produce nine files in a single output folder:
 """
 from __future__ import annotations
 
+import html
 import json
 import logging
 from collections.abc import Iterable
@@ -21,6 +22,7 @@ from pathlib import Path
 
 import markdown as md_lib
 
+from ..models.candidate import CandidateProfile
 from ..models.documents import (
     CoverLetter,
     InterviewQuestion,
@@ -44,6 +46,7 @@ class ExportPaths:
     folder: Path
     resume_md: Path
     resume_docx: Path
+    resume_html: Path
     cover_letter_md: Path
     cover_letter_docx: Path
     match_report_md: Path
@@ -73,6 +76,7 @@ def build_export_paths(folder: Path) -> ExportPaths:
         folder=folder,
         resume_md=folder / "tailored_resume.md",
         resume_docx=folder / "tailored_resume.docx",
+        resume_html=folder / "tailored_resume.html",
         cover_letter_md=folder / "cover_letter.md",
         cover_letter_docx=folder / "cover_letter.docx",
         match_report_md=folder / "match_report.md",
@@ -316,6 +320,402 @@ def cover_letter_to_docx(cover: CoverLetter, path: str | Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Styled HTML resume (modern two-column A4 template)
+# ---------------------------------------------------------------------------
+_RESUME_LABELS: dict[str, dict[str, str]] = {
+    "en": {
+        "profile": "Profile",
+        "experience": "Experience",
+        "projects": "Projects",
+        "education": "Education",
+        "certifications": "Certifications",
+        "contact": "Contact",
+        "online": "Online",
+        "tech_stack": "Tech Stack",
+        "languages": "Languages",
+        "tailored_for": "Tailored for",
+    },
+    "cs": {
+        "profile": "Profil",
+        "experience": "Pracovní zkušenosti",
+        "projects": "Vlastní projekty",
+        "education": "Vzdělání",
+        "certifications": "Certifikáty &amp; kurzy",
+        "contact": "Kontakt",
+        "online": "Online",
+        "tech_stack": "Tech Stack",
+        "languages": "Jazyky",
+        "tailored_for": "Tailored for",
+    },
+}
+
+# Skill -> group mapping. Lowercased substring matching keeps the table small.
+_SKILL_GROUP_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Test Automation", (
+        "playwright", "selenium", "cypress", "pytest", "appium", "puppeteer",
+        "webdriver", "page object", "robot framework", "testng", "junit",
+    )),
+    ("Languages", (
+        "python", "java", "javascript", "typescript", "c#", "c++", "go ",
+        "rust", "kotlin", "swift", "ruby", "php", "sql", "bash", "powershell",
+        "scala",
+    )),
+    ("CI/CD & Tooling", (
+        "jenkins", "teamcity", "docker", "kubernetes", "git", "github actions",
+        "gitlab ci", "circleci", "jira", "linux", "azure devops", "ansible",
+        "terraform", "vmware", "virtualization", "virtualisation",
+    )),
+    ("Frameworks", (
+        "fastapi", "django", "flask", "react", "vue", "angular", "next.js",
+        "nextjs", "express", "spring", "node.js", "nodejs", ".net",
+    )),
+    ("AI / Data", (
+        "openai", "anthropic", "claude", "llm", "langchain", "rag",
+        "pgvector", "faiss", "chroma", "pinecone", "pandas", "numpy",
+        "scikit-learn", "pytorch", "tensorflow", "ai-asistovan",
+        "prompt engineering",
+    )),
+    ("Databases", (
+        "postgres", "postgresql", "mysql", "mongodb", "sqlite", "redis",
+        "oracle db", "mssql",
+    )),
+    ("Methodology", (
+        "agile", "scrum", "kanban", "tdd", "bdd", "test strategy",
+        "framework design", "mentoring",
+    )),
+)
+_SKILL_GROUP_CS_LABELS: dict[str, str] = {
+    "Test Automation": "Test Automation",
+    "Languages": "Jazyky",
+    "CI/CD & Tooling": "CI/CD &amp; nástroje",
+    "Frameworks": "Frameworky",
+    "AI / Data": "AI / Data",
+    "Databases": "Databáze",
+    "Methodology": "Metodiky",
+    "Other": "Ostatní",
+}
+
+_CZECH_DIACRITICS = set("ěščřžýáíéúůťďňĚŠČŘŽÝÁÍÉÚŮŤĎŇ")
+
+
+def _detect_resume_language(resume: TailoredResume) -> str:
+    """Return ``'cs'`` if Czech diacritics are common, ``'en'`` otherwise."""
+    blobs: list[str] = [resume.professional_summary or ""]
+    for section in (resume.experience, resume.projects, resume.education):
+        for s in section:
+            blobs.append(s.title or "")
+            blobs.append(s.subtitle or "")
+            for b in s.bullets:
+                blobs.append(b.text or "")
+    text = " ".join(blobs)
+    if not text:
+        return "en"
+    cz = sum(1 for c in text if c in _CZECH_DIACRITICS)
+    letters = sum(1 for c in text if c.isalpha())
+    if letters and (cz / letters) > 0.005:
+        return "cs"
+    return "en"
+
+
+def _group_skills(skills: Iterable[str]) -> list[tuple[str, list[str]]]:
+    """Bucket a flat skill list into ``(group_label, skills)`` tuples."""
+    buckets: dict[str, list[str]] = {g: [] for g, _ in _SKILL_GROUP_KEYWORDS}
+    other: list[str] = []
+    for skill in skills:
+        s_low = (skill or "").lower()
+        if not s_low:
+            continue
+        placed = False
+        for group, keywords in _SKILL_GROUP_KEYWORDS:
+            if any(kw in s_low for kw in keywords):
+                if skill not in buckets[group]:
+                    buckets[group].append(skill)
+                placed = True
+                break
+        if not placed and skill not in other:
+            other.append(skill)
+    result: list[tuple[str, list[str]]] = [
+        (group, items) for group, items in buckets.items() if items
+    ]
+    if other:
+        result.append(("Other", other))
+    return result
+
+
+def _esc(text: str | None) -> str:
+    return html.escape(text or "", quote=True)
+
+
+def _localised_group_label(group: str, lang: str) -> str:
+    if lang == "cs":
+        return _SKILL_GROUP_CS_LABELS.get(group, group)
+    return group
+
+
+_STYLED_RESUME_CSS = """
+:root{
+  --teal-900:#0E7490;
+  --teal-700:#0F766E;
+  --teal-500:#14B8A6;
+  --teal-50:#F0FDFA;
+  --ink-900:#0F172A;
+  --ink-700:#334155;
+  --ink-500:#64748B;
+  --ink-200:#E2E8F0;
+  --bg:#FFFFFF;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{font-family:'Inter','Segoe UI','Helvetica Neue',Arial,sans-serif;color:var(--ink-900);background:#F8FAFC;line-height:1.45;font-size:10.5pt}
+.page{max-width:210mm;min-height:297mm;margin:0 auto;background:var(--bg);box-shadow:0 8px 30px rgba(15,23,42,0.08);display:grid;grid-template-columns:73mm 1fr}
+.sidebar{background:linear-gradient(180deg,var(--teal-900) 0%,var(--teal-700) 100%);color:#fff;padding:14mm 9mm 12mm 9mm}
+.sidebar h1{font-size:20pt;line-height:1.1;font-weight:800;letter-spacing:-0.02em;margin-bottom:3mm}
+.sidebar .role{font-size:10.5pt;color:var(--teal-50);font-weight:500;margin-bottom:8mm;letter-spacing:0.02em}
+.sb-section{margin-top:7mm}
+.sb-section h3{font-size:9pt;text-transform:uppercase;letter-spacing:0.18em;font-weight:700;color:#7DD3FC;border-bottom:1px solid rgba(125,211,252,0.35);padding-bottom:1.5mm;margin-bottom:3mm}
+.sb-section p, .sb-section li{font-size:9.5pt;color:#E0F7FA;margin-bottom:1.5mm;word-wrap:break-word}
+.sb-section a{color:#fff;text-decoration:none;border-bottom:1px dotted rgba(255,255,255,0.4)}
+.sb-section ul{list-style:none}
+.sb-section .contact-line{display:flex;align-items:flex-start;gap:2mm;font-size:9pt;margin-bottom:1.8mm}
+.sb-section .contact-line .ic{flex:0 0 4mm;color:#7DD3FC;font-weight:700;font-size:9pt}
+.skill-group{margin-bottom:3.5mm}
+.skill-group .group-label{font-size:8.5pt;color:#7DD3FC;font-weight:600;margin-bottom:1mm;text-transform:uppercase;letter-spacing:0.06em}
+.skill-tags{display:flex;flex-wrap:wrap;gap:1.5mm}
+.skill-tag{background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.2);padding:0.8mm 2mm;border-radius:2mm;font-size:8.5pt;color:#fff}
+.lang-row{display:flex;justify-content:space-between;align-items:center;font-size:9.5pt;margin-bottom:1.5mm}
+.lang-row .lvl{font-size:8.5pt;color:#7DD3FC;font-weight:600}
+.main{padding:14mm 12mm 12mm 12mm}
+.main h2{font-size:11pt;text-transform:uppercase;letter-spacing:0.16em;color:var(--teal-900);font-weight:800;border-bottom:2px solid var(--teal-500);padding-bottom:1.2mm;margin:0 0 4mm 0}
+.main h2:not(:first-child){margin-top:7mm}
+.tailored{font-size:9pt;color:var(--ink-500);font-style:italic;margin-bottom:5mm}
+.tailored strong{color:var(--teal-700);font-style:normal;font-weight:600}
+.summary{font-size:10pt;color:var(--ink-700);line-height:1.55}
+.job{margin-bottom:5mm}
+.job-header{display:flex;justify-content:space-between;align-items:baseline;gap:3mm;margin-bottom:0.5mm}
+.job-title{font-size:10.5pt;font-weight:700;color:var(--ink-900)}
+.job-period{font-size:9pt;color:var(--ink-500);font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:500}
+.job-company{font-size:9.5pt;color:var(--teal-700);font-weight:600;margin-bottom:1.5mm}
+.job ul{list-style:none;padding-left:0}
+.job ul li{position:relative;padding-left:4mm;margin-bottom:1.4mm;font-size:9.5pt;color:var(--ink-700);line-height:1.45}
+.job ul li::before{content:'\\25B8';position:absolute;left:0;top:0;color:var(--teal-500);font-weight:700;font-size:9pt}
+.project-card{border-left:3px solid var(--teal-500);padding-left:3mm;margin-bottom:3mm}
+.project-card .pname{font-size:10pt;font-weight:700;color:var(--ink-900);margin-bottom:0.5mm}
+.project-card .pdesc{font-size:9.5pt;color:var(--ink-700);line-height:1.45}
+.edu-row{margin-bottom:3mm}
+.edu-row .top{display:flex;justify-content:space-between;font-size:10pt;font-weight:600;color:var(--ink-900)}
+.edu-row .sub{font-size:9.5pt;color:var(--ink-500);font-style:italic}
+.cert-list{display:grid;grid-template-columns:1fr 1fr;gap:1.5mm 4mm}
+.cert-item{font-size:9.5pt;color:var(--ink-700)}
+@page{size:A4;margin:0}
+@media print{body{background:#fff}.page{box-shadow:none;margin:0}}
+"""
+
+
+def _styled_sidebar(
+    resume: TailoredResume,
+    candidate: CandidateProfile | None,
+    labels: dict[str, str],
+    lang: str,
+) -> str:
+    candidate = candidate or CandidateProfile()
+
+    contact_lines: list[str] = []
+    if candidate.location:
+        contact_lines.append(
+            f'<div class="contact-line"><span class="ic">@</span>'
+            f'<span>{_esc(candidate.location)}</span></div>'
+        )
+    if candidate.contact_email:
+        contact_lines.append(
+            f'<div class="contact-line"><span class="ic">e</span>'
+            f'<span>{_esc(candidate.contact_email)}</span></div>'
+        )
+    if candidate.phone:
+        contact_lines.append(
+            f'<div class="contact-line"><span class="ic">t</span>'
+            f'<span>{_esc(candidate.phone)}</span></div>'
+        )
+    if not contact_lines and resume.contact_line:
+        # Split fallback "X | Y | Z" contact_line into separate rows.
+        for piece in [p.strip() for p in resume.contact_line.split("|") if p.strip()]:
+            contact_lines.append(
+                f'<div class="contact-line"><span class="ic">&middot;</span>'
+                f'<span>{_esc(piece)}</span></div>'
+            )
+
+    online_lines: list[str] = []
+    li = resume.linkedin or candidate.linkedin_url
+    gh = resume.github or candidate.github_url
+    pf = resume.portfolio or candidate.portfolio_url
+    if li:
+        online_lines.append(
+            f'<div class="contact-line"><span class="ic">in</span>'
+            f'<a href="{_esc(li)}">{_esc(li)}</a></div>'
+        )
+    if gh:
+        online_lines.append(
+            f'<div class="contact-line"><span class="ic">gh</span>'
+            f'<a href="{_esc(gh)}">{_esc(gh)}</a></div>'
+        )
+    if pf:
+        online_lines.append(
+            f'<div class="contact-line"><span class="ic">&#9658;</span>'
+            f'<a href="{_esc(pf)}">{_esc(pf)}</a></div>'
+        )
+
+    skill_groups_html: list[str] = []
+    for group_label, items in _group_skills(resume.technical_skills):
+        tags = "".join(
+            f'<span class="skill-tag">{_esc(s)}</span>' for s in items
+        )
+        skill_groups_html.append(
+            f'<div class="skill-group">'
+            f'<div class="group-label">{_esc(_localised_group_label(group_label, lang))}</div>'
+            f'<div class="skill-tags">{tags}</div>'
+            f"</div>"
+        )
+
+    languages_html = ""
+    if candidate.spoken_languages:
+        rows: list[str] = []
+        for entry in candidate.spoken_languages:
+            # Accept either plain "Czech" or "Czech (C2)" / "Czech - native".
+            name, level = entry, ""
+            for sep in ("(", " - ", " \u2013 ", ":"):
+                if sep in entry:
+                    name, _, raw_level = entry.partition(sep)
+                    level = raw_level.rstrip(") ").strip()
+                    name = name.strip()
+                    break
+            rows.append(
+                f'<div class="lang-row"><span>{_esc(name)}</span>'
+                f'<span class="lvl">{_esc(level)}</span></div>'
+            )
+        languages_html = (
+            f'<div class="sb-section"><h3>{_esc(labels["languages"])}</h3>'
+            + "".join(rows)
+            + "</div>"
+        )
+
+    role_line = ""
+    if resume.role_targeted_for:
+        role_line = f'<div class="role">{_esc(resume.role_targeted_for)}</div>'
+
+    sections: list[str] = [f'<h1>{_esc(resume.name or "Candidate")}</h1>{role_line}']
+    if contact_lines:
+        sections.append(
+            f'<div class="sb-section"><h3>{_esc(labels["contact"])}</h3>'
+            + "".join(contact_lines)
+            + "</div>"
+        )
+    if online_lines:
+        sections.append(
+            f'<div class="sb-section"><h3>{_esc(labels["online"])}</h3>'
+            + "".join(online_lines)
+            + "</div>"
+        )
+    if skill_groups_html:
+        sections.append(
+            f'<div class="sb-section"><h3>{_esc(labels["tech_stack"])}</h3>'
+            + "".join(skill_groups_html)
+            + "</div>"
+        )
+    if languages_html:
+        sections.append(languages_html)
+    return f'<aside class="sidebar">{"".join(sections)}</aside>'
+
+
+def _styled_main(resume: TailoredResume, labels: dict[str, str]) -> str:
+    parts: list[str] = []
+
+    if resume.role_targeted_for:
+        parts.append(
+            f'<p class="tailored">{_esc(labels["tailored_for"])}: '
+            f'<strong>{_esc(resume.role_targeted_for)}</strong></p>'
+        )
+
+    if resume.professional_summary:
+        parts.append(
+            f'<h2>{_esc(labels["profile"])}</h2>'
+            f'<p class="summary">{_esc(resume.professional_summary)}</p>'
+        )
+
+    if resume.experience:
+        parts.append(f'<h2>{_esc(labels["experience"])}</h2>')
+        for s in resume.experience:
+            bullets = "".join(f"<li>{_esc(b.text)}</li>" for b in s.bullets)
+            parts.append(
+                '<div class="job">'
+                '<div class="job-header">'
+                f'<div class="job-title">{_esc(s.title)}</div>'
+                "</div>"
+                + (f'<div class="job-company">{_esc(s.subtitle)}</div>' if s.subtitle else "")
+                + (f"<ul>{bullets}</ul>" if bullets else "")
+                + "</div>"
+            )
+
+    if resume.projects:
+        parts.append(f'<h2>{_esc(labels["projects"])}</h2>')
+        for s in resume.projects:
+            description = " ".join(b.text for b in s.bullets) or s.subtitle
+            parts.append(
+                '<div class="project-card">'
+                f'<div class="pname">{_esc(s.title)}</div>'
+                f'<div class="pdesc">{_esc(description)}</div>'
+                "</div>"
+            )
+
+    if resume.education:
+        parts.append(f'<h2>{_esc(labels["education"])}</h2>')
+        for s in resume.education:
+            parts.append(
+                '<div class="edu-row">'
+                f'<div class="top"><span>{_esc(s.title)}</span></div>'
+                + (f'<div class="sub">{_esc(s.subtitle)}</div>' if s.subtitle else "")
+                + "</div>"
+            )
+
+    if resume.certifications:
+        parts.append(f'<h2>{_esc(labels["certifications"])}</h2>')
+        items = "".join(
+            f'<div class="cert-item">{_esc(cert)}</div>'
+            for cert in resume.certifications
+        )
+        parts.append(f'<div class="cert-list">{items}</div>')
+
+    return f'<main class="main">{"".join(parts)}</main>'
+
+
+def tailored_resume_to_styled_html(
+    resume: TailoredResume,
+    candidate: CandidateProfile | None = None,
+) -> str:
+    """Render a printable two-column A4 HTML resume.
+
+    The layout is inspired by a modern teal-and-ink CV: a sidebar with
+    contact details, online links, grouped tech-stack pill chips and
+    spoken languages, plus a main column with profile, experience,
+    projects, education and certifications. CSS is inlined so the output
+    file is fully self-contained.
+    """
+    lang = _detect_resume_language(resume)
+    labels = _RESUME_LABELS[lang]
+    title = (
+        f"{resume.name or 'Resume'} - {resume.role_targeted_for}"
+        if resume.role_targeted_for
+        else resume.name or "Resume"
+    )
+    sidebar = _styled_sidebar(resume, candidate, labels, lang)
+    main = _styled_main(resume, labels)
+    return (
+        '<!doctype html>\n'
+        f'<html lang="{lang}"><head><meta charset="utf-8"/>'
+        f"<title>{_esc(title)}</title>"
+        f"<style>{_STYLED_RESUME_CSS}</style></head>"
+        f'<body><div class="page">{sidebar}{main}</div></body></html>'
+    )
+
+
+# ---------------------------------------------------------------------------
 # HTML application_summary.html
 # ---------------------------------------------------------------------------
 _HTML_TEMPLATE = """<!doctype html>
@@ -389,6 +789,12 @@ def export_package(
 
     paths.resume_md.write_text(resume_to_markdown(package.tailored_resume), encoding="utf-8")
     resume_to_docx(package.tailored_resume, paths.resume_docx)
+    paths.resume_html.write_text(
+        tailored_resume_to_styled_html(
+            package.tailored_resume, package.candidate_profile
+        ),
+        encoding="utf-8",
+    )
 
     paths.cover_letter_md.write_text(cover_letter_to_markdown(package.cover_letter), encoding="utf-8")
     cover_letter_to_docx(package.cover_letter, paths.cover_letter_docx)
@@ -427,6 +833,7 @@ __all__ = [
     "evidence_report_to_dict",
     "resume_to_docx",
     "cover_letter_to_docx",
+    "tailored_resume_to_styled_html",
     "application_summary_to_html",
     "export_package",
 ]
