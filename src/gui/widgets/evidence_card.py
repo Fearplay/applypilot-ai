@@ -2,15 +2,17 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout
 
 from ...models.evidence import EvidenceItem
+from ..theme import Tokens
+from .status_chip import StatusChip
 
 
-_COLOURS = {
-    "high": "#1f8a3a",
-    "medium": "#d29922",
-    "low": "#a23a3a",
+_CONFIDENCE_VARIANT: dict[str, str] = {
+    "high": "done",
+    "medium": "active",
+    "low": "danger",
 }
 
 
@@ -18,32 +20,44 @@ class EvidenceCard(QFrame):
     def __init__(self, item: EvidenceItem, parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("EvidenceCard")
-        self.setFrameShape(QFrame.StyledPanel)
         self.setStyleSheet(
-            "#EvidenceCard { background: #2a2d35; border-radius: 8px; "
-            "padding: 10px; border: 1px solid #3a3d45; }"
-            "#EvidenceCard QLabel { color: #e8e8ee; }"
+            f"#EvidenceCard {{"
+            f"  background-color: {Tokens.surface_alt};"
+            f"  border: 1px solid {Tokens.border};"
+            f"  border-radius: 10px;"
+            f"}}"
+            f"#EvidenceCard QLabel {{ color: {Tokens.text}; }}"
         )
+
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(4)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(6)
 
-        title = QLabel(f"<b>{item.skill or item.claim}</b>")
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(8)
+
+        title = QLabel(item.skill or item.claim)
         title.setWordWrap(True)
-        layout.addWidget(title)
-
-        meta_color = _COLOURS.get(item.confidence, "#a8a8b3")
-        meta = QLabel(
-            f"<span style='color:{meta_color};'>"
-            f"{item.confidence.upper()}</span> "
-            f"&nbsp;&nbsp; {item.source_type} &middot; {item.source_name}"
+        title.setStyleSheet(
+            f"color: {Tokens.text}; font-weight: 600; font-size: 13px;"
         )
-        meta.setTextFormat(Qt.RichText)
+        header.addWidget(title, stretch=1)
+
+        chip = StatusChip(
+            item.confidence.upper(),
+            variant=_CONFIDENCE_VARIANT.get(item.confidence, "idle"),  # type: ignore[arg-type]
+        )
+        header.addWidget(chip, alignment=Qt.AlignVCenter)
+        layout.addLayout(header)
+
+        meta = QLabel(f"{item.source_type} \u00b7 {item.source_name}")
+        meta.setStyleSheet(f"color: {Tokens.text_muted}; font-size: 11px;")
         layout.addWidget(meta)
 
         body = QLabel(item.evidence_text)
         body.setWordWrap(True)
-        body.setStyleSheet("color: #c2c5cf;")
+        body.setStyleSheet(f"color: {Tokens.text_muted}; font-size: 12px;")
         layout.addWidget(body)
 
 

@@ -1,4 +1,4 @@
-"""Main window: navigation, workflow state, demo banner, settings dialog."""
+"""Main window: slim sidebar nav, modern header chip, modal questions."""
 from __future__ import annotations
 
 import logging
@@ -7,22 +7,19 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThreadPool, Signal
+from PySide6.QtCore import Qt, QThreadPool
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QMainWindow,
     QMessageBox,
-    QPushButton,
-    QSplitter,
     QStackedWidget,
     QStatusBar,
     QVBoxLayout,
@@ -39,25 +36,26 @@ from ..models.documents import (
     SkillGap,
     TailoredResume,
 )
-from ..models.evidence import EvidenceCheckResult, EvidenceItem
+from ..models.evidence import EvidenceCheckResult
 from ..models.job import JobPosting
 from ..models.match import AnswersBundle, ClarifyingQuestion, MatchReport
 from ..models.package import GeneratedApplicationPackage
 from ..services.cover_letter_generator import generate_cover_letter
 from ..services.export_service import export_package
 from ..services.gap_plan_generator import generate_skill_gap_plan
-from ..services.history_service import append_history
+from ..services.history_service import append_history, load_package_files
 from ..services.interview_generator import generate_interview_questions
 from ..services.match_engine import compute_match, needs_clarifying_questions
 from ..services.question_generator import generate_questions
 from ..services.resume_generator import generate_tailored_resume
-from .candidate_input_page import CandidateInputPage
 from .documents_page import DocumentsPage
 from .history_page import HistoryPage
-from .job_input_page import JobInputPage
 from .match_report_page import MatchReportPage
-from .questions_page import QuestionsPage
-from .welcome_page import WelcomePage
+from .questions_dialog import QuestionsDialog
+from .setup_page import SetupPage
+from .theme import Tokens
+from .widgets.sidebar import Sidebar, SidebarItem
+from .widgets.status_chip import StatusChip
 from .workers import run_in_background
 
 logger = logging.getLogger(__name__)
@@ -88,40 +86,76 @@ class SettingsDialog(QDialog):
     def __init__(self, settings: Settings, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("AI provider settings")
-        self.setMinimumWidth(520)
+        self.setMinimumWidth(560)
 
         self._settings = settings
 
         layout = QVBoxLayout(self)
-        info = QLabel(
-            "Adjust the active AI provider for this session. To make the change "
-            "permanent, also update <code>.env</code> in the project root."
+        layout.setContentsMargins(20, 18, 20, 16)
+        layout.setSpacing(12)
+
+        title = QLabel("AI provider")
+        title.setStyleSheet(
+            f"color: {Tokens.text}; font-size: 18px; font-weight: 600;"
         )
+        layout.addWidget(title)
+
+        info = QLabel(
+            "<b>Tip:</b> this dialog only affects the <b>current session</b>. "
+            "Restarting the app reloads everything from <code>.env</code> in "
+            "the project root - copy <code>.env.example</code> to "
+            "<code>.env</code> and edit <code>AI_PROVIDER</code>, "
+            "<code>AI_API_KEY</code>, <code>AI_BASE_URL</code> and "
+            "<code>AI_MODEL</code> to make the change permanent."
+        )
+        info.setTextFormat(Qt.RichText)
         info.setWordWrap(True)
+        info.setStyleSheet(
+            f"color: {Tokens.text}; font-size: 12px;"
+            f" background-color: {Tokens.surface_alt};"
+            f" border: 1px solid {Tokens.border};"
+            f" border-radius: 8px; padding: 10px 12px;"
+        )
         layout.addWidget(info)
 
         form = QFormLayout()
+        form.setSpacing(10)
         self._provider_combo = QComboBox()
         self._provider_combo.addItem("fake (offline demo, default)", "fake")
-        self._provider_combo.addItem("openai_compatible (any compatible HTTP endpoint)",
-                                     "openai_compatible")
+        self._provider_combo.addItem(
+            "openai_compatible (any compatible HTTP endpoint)",
+            "openai_compatible",
+        )
+        self._provider_combo.setItemData(
+            0,
+            "Free, deterministic offline mode. Even with an API key filled in "
+            "below, leaving Provider on 'fake' keeps the demo - switch to "
+            "'openai_compatible' to actually call the API.",
+            Qt.ToolTipRole,
+        )
+        self._provider_combo.setItemData(
+            1,
+            "Calls the OpenAI-compatible /v1/chat/completions endpoint at the "
+            "Base URL below. Requires a valid API key.",
+            Qt.ToolTipRole,
+        )
         if settings.ai_provider == "openai_compatible":
             self._provider_combo.setCurrentIndex(1)
-        form.addRow("Provider:", self._provider_combo)
+        form.addRow("Provider", self._provider_combo)
 
         self._base_url = QLineEdit(settings.ai_base_url)
-        form.addRow("Base URL:", self._base_url)
+        form.addRow("Base URL", self._base_url)
 
         self._api_key = QLineEdit(settings.ai_api_key)
         self._api_key.setEchoMode(QLineEdit.Password)
-        form.addRow("API key:", self._api_key)
+        form.addRow("API key", self._api_key)
 
         self._model = QLineEdit(settings.ai_model)
-        form.addRow("Model:", self._model)
+        form.addRow("Model", self._model)
         layout.addLayout(form)
 
         hint = QLabel(
-            "<b>Examples</b>: <br>"
+            "<b>Examples</b><br>"
             "&bull; OpenAI: <code>https://api.openai.com/v1</code> "
             "<code>gpt-4o-mini</code><br>"
             "&bull; Groq: <code>https://api.groq.com/openai/v1</code> "
@@ -132,15 +166,19 @@ class SettingsDialog(QDialog):
             "<code>llama3.1</code>"
         )
         hint.setTextFormat(Qt.RichText)
-        hint.setStyleSheet("color: #a8a8b3;")
+        hint.setStyleSheet(f"color: {Tokens.text_muted}; font-size: 11px;")
         layout.addWidget(hint)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel
         )
+        ok_btn = buttons.button(QDialogButtonBox.Ok)
+        ok_btn.setProperty("variant", "primary")
+        ok_btn.style().unpolish(ok_btn)
+        ok_btn.style().polish(ok_btn)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        layout.addWidget(buttons, alignment=Qt.AlignRight)
 
     def accepted_settings(self) -> Settings:
         os.environ["AI_PROVIDER"] = self._provider_combo.currentData()
@@ -151,103 +189,113 @@ class SettingsDialog(QDialog):
 
 
 # ---------------------------------------------------------------------------
+# Header bar
+# ---------------------------------------------------------------------------
+class _HeaderBar(QFrame):
+    """Slim top header: page title on the left, status chip on the right."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setProperty("role", "header")
+        self.setStyleSheet(
+            f"QFrame[role='header'] {{"
+            f"  background-color: {Tokens.bg};"
+            f"  border-bottom: 1px solid {Tokens.border};"
+            f"}}"
+        )
+        self.setFixedHeight(54)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(28, 0, 18, 0)
+        layout.setSpacing(10)
+
+        self._title = QLabel("Setup")
+        self._title.setStyleSheet(
+            f"color: {Tokens.text}; font-size: 17px; font-weight: 600;"
+        )
+        layout.addWidget(self._title)
+
+        layout.addStretch(1)
+
+        self._provider_chip = StatusChip("Demo", variant="demo", parent=self)
+        layout.addWidget(self._provider_chip)
+
+    def set_title(self, text: str) -> None:
+        self._title.setText(text)
+
+    def set_provider_chip(self, text: str, variant: str) -> None:
+        self._provider_chip.set_variant(variant, text=text)  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
 # Main window
 # ---------------------------------------------------------------------------
-_STEPS = [
-    ("Welcome", "Start here"),
-    ("1. Job input", "Paste URL or text"),
-    ("2. Candidate", "CV / LinkedIn / GitHub"),
-    ("3. Questions", "Clarifying answers"),
-    ("4. Match report", "Scores & evidence"),
-    ("5. Documents", "Resume + cover + export"),
-    ("6. History", "Past analyses"),
+_SECTIONS: list[SidebarItem] = [
+    SidebarItem(key="setup",     title="Setup",         subtitle="Job + profile inputs"),
+    SidebarItem(key="match",     title="Match report",  subtitle="Scores & evidence"),
+    SidebarItem(key="documents", title="Documents",     subtitle="Resume + cover + export"),
+    SidebarItem(key="history",   title="History",       subtitle="Past analyses"),
 ]
+_SECTION_INDEX: dict[str, int] = {item.key: i for i, item in enumerate(_SECTIONS)}
 
 
 class MainWindow(QMainWindow):
     def __init__(self, settings: Settings, provider: BaseAIProvider) -> None:
         super().__init__()
         self.setWindowTitle("ApplyPilot AI")
-        self.resize(1200, 800)
+        self.resize(1280, 820)
         self._settings = settings
         self._provider = provider
         self._state = WorkflowState()
         self._pool = QThreadPool.globalInstance()
 
         self._build_ui()
-        self._refresh_provider_banner()
-        self._stack.setCurrentIndex(0)
+        self._refresh_provider_chip()
+        self._goto("setup")
 
     # ------------------------------------------------------------------ UI
     def _build_ui(self) -> None:
         central = QWidget(self)
         self.setCentralWidget(central)
-        outer = QVBoxLayout(central)
+        outer = QHBoxLayout(central)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        self._banner = QLabel("")
-        self._banner.setObjectName("ProviderBanner")
-        self._banner.setStyleSheet(
-            "#ProviderBanner { padding: 8px 14px; font-weight: 600; }"
-        )
-        self._banner.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        outer.addWidget(self._banner)
+        self._sidebar = Sidebar(_SECTIONS, title="ApplyPilot")
+        self._sidebar.section_clicked.connect(self._goto)
+        outer.addWidget(self._sidebar)
 
-        splitter = QSplitter(Qt.Horizontal)
-        outer.addWidget(splitter, stretch=1)
+        right = QWidget()
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(0)
+        outer.addWidget(right, stretch=1)
 
-        self._nav = QListWidget()
-        self._nav.setMaximumWidth(220)
-        self._nav.setStyleSheet(
-            "QListWidget { background: #20232a; color: #c2c5cf; border: none; }"
-            "QListWidget::item { padding: 12px 14px; }"
-            "QListWidget::item:selected { background: #1f6feb; color: white; }"
-        )
-        for title, subtitle in _STEPS:
-            it = QListWidgetItem(f"{title}\n  {subtitle}")
-            it.setSizeHint(it.sizeHint())
-            self._nav.addItem(it)
-        self._nav.currentRowChanged.connect(self._on_nav_changed)
-        splitter.addWidget(self._nav)
+        self._header = _HeaderBar()
+        right_layout.addWidget(self._header)
 
         self._stack = QStackedWidget()
-        splitter.addWidget(self._stack)
-        splitter.setStretchFactor(1, 1)
+        right_layout.addWidget(self._stack, stretch=1)
 
-        # Pages
-        self._welcome = WelcomePage()
-        self._welcome.start_clicked.connect(lambda: self._goto(1))
-        self._welcome.load_sample_clicked.connect(self._on_load_sample)
-        self._welcome.open_settings_clicked.connect(self._open_settings)
-        self._stack.addWidget(self._welcome)
-
-        self._job_page = JobInputPage(self._provider)
-        self._job_page.job_parsed.connect(self._on_job_parsed)
-        self._stack.addWidget(self._job_page)
-
-        self._cand_page = CandidateInputPage(self._provider, self._settings)
-        self._cand_page.profile_built.connect(self._on_profile_built)
-        self._stack.addWidget(self._cand_page)
-
-        self._questions_page = QuestionsPage()
-        self._questions_page.answered.connect(self._on_questions_answered)
-        self._stack.addWidget(self._questions_page)
+        self._setup_page = SetupPage(self._provider, self._settings)
+        self._setup_page.connect_sample_handler(self._on_load_sample)
+        self._setup_page.job_parsed.connect(self._on_job_parsed)
+        self._setup_page.profile_built.connect(self._on_profile_built)
+        self._stack.addWidget(self._setup_page)
 
         self._match_page = MatchReportPage()
-        self._match_page.back_clicked.connect(lambda: self._goto(2))
+        self._match_page.back_clicked.connect(lambda: self._goto("setup"))
         self._match_page.generate_clicked.connect(self._start_document_generation)
         self._stack.addWidget(self._match_page)
 
         self._docs_page = DocumentsPage()
-        self._docs_page.back_clicked.connect(lambda: self._goto(4))
+        self._docs_page.back_clicked.connect(lambda: self._goto("match"))
         self._docs_page.save_analysis_clicked.connect(self._on_save_analysis)
         self._stack.addWidget(self._docs_page)
 
         self._history_page = HistoryPage(self._settings)
+        self._history_page.open_in_app_requested.connect(self._on_open_history_in_app)
         self._stack.addWidget(self._history_page)
 
-        # Status bar + menu
         self.setStatusBar(QStatusBar())
         self._build_menu()
 
@@ -274,47 +322,27 @@ class MainWindow(QMainWindow):
         help_menu.addAction(about)
 
     # ----------------------------------------------------------- helpers
-    def _goto(self, index: int) -> None:
+    def _goto(self, key: str) -> None:
+        index = _SECTION_INDEX.get(key)
+        if index is None:
+            return
         self._stack.setCurrentIndex(index)
-        self._nav.blockSignals(True)
-        self._nav.setCurrentRow(index)
-        self._nav.blockSignals(False)
-        if index == 6:
+        self._sidebar.set_active(key)
+        self._header.set_title(_SECTIONS[index].title)
+        if key == "history":
             self._history_page.refresh()
 
-    def _on_nav_changed(self, row: int) -> None:
-        if row >= 0:
-            self._stack.setCurrentIndex(row)
-            if row == 6:
-                self._history_page.refresh()
-
-    def _refresh_provider_banner(self) -> None:
+    def _refresh_provider_chip(self) -> None:
         if self._provider.is_demo:
-            self._banner.setStyleSheet(
-                "#ProviderBanner { background: #d29922; color: #1a1a1a;"
-                " padding: 8px 14px; font-weight: 600; }"
-            )
-            self._banner.setText(
-                f"DEMO MODE - using FakeAIProvider ({self._provider.reason}). "
-                "Outputs are deterministic placeholders. Open File > Settings to "
-                "switch to a real AI provider."
-            )
+            self._header.set_provider_chip("Demo", "demo")
         else:
-            self._banner.setStyleSheet(
-                "#ProviderBanner { background: #1f8a3a; color: white;"
-                " padding: 8px 14px; font-weight: 600; }"
-            )
-            self._banner.setText(
-                f"REAL AI PROVIDER ACTIVE - {self._provider.name} "
-                f"({self._provider.reason}). Each generation calls your AI provider."
-            )
+            self._header.set_provider_chip("Live AI", "live")
 
     def _replace_provider(self, settings: Settings) -> None:
         self._settings = settings
         self._provider = build_provider(settings)
-        self._job_page.set_provider(self._provider)
-        self._cand_page.set_provider(self._provider)
-        self._refresh_provider_banner()
+        self._setup_page.set_provider(self._provider)
+        self._refresh_provider_chip()
 
     # ----------------------------------------------------------- handlers
     def _open_settings(self) -> None:
@@ -344,7 +372,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "Sample data missing",
-                f"Could not find {jd_path}. Sample data will be added in the next commit.",
+                f"Could not find {jd_path}.",
             )
             return
         try:
@@ -352,29 +380,37 @@ class MainWindow(QMainWindow):
         except OSError as exc:
             QMessageBox.warning(self, "Could not read sample", str(exc))
             return
-        self._job_page.load_text(jd)
-        self._cand_page.preset_paths(
+
+        github_profile_url: str | None = None
+        if gh_path.exists():
+            username = gh_path.read_text(encoding="utf-8").strip()
+            if username:
+                github_profile_url = f"https://github.com/{username}"
+
+        self._setup_page.preset_inputs(
+            job_text=jd,
             cv=cv_path if cv_path.exists() else None,
             linkedin=li_path if li_path.exists() else None,
-            github_username=gh_path.read_text(encoding="utf-8").strip()
-            if gh_path.exists() else None,
+            github_profile_url=github_profile_url,
         )
-        self._goto(1)
+        self._goto("setup")
+        self._sidebar.set_activity("Sample data loaded")
         self.statusBar().showMessage(
-            "Sample data loaded - click 'Analyze job' to continue.", 5000
+            "Sample data loaded - click 'Run analysis' to continue.", 5000
         )
 
     # ----------------------------------------------------------- workflow
     def _on_job_parsed(self, job: JobPosting) -> None:
         self._state.job = job
-        self._cand_page.set_job(job)
-        self._goto(2)
+        self._sidebar.set_status("setup", "In progress", "active")
+        self._sidebar.set_activity(f"Parsed job: {job.title or 'Unknown'}")
 
     def _on_profile_built(self, profile: CandidateProfile) -> None:
         self._state.candidate = profile
         if self._state.job is None:
-            QMessageBox.warning(self, "No job", "Please go back and analyze a job first.")
+            QMessageBox.warning(self, "No job", "Please add a job description first.")
             return
+        self._sidebar.set_activity("Computing match score...")
         self._start_match()
 
     def _start_match(self) -> None:
@@ -412,6 +448,7 @@ class MainWindow(QMainWindow):
         answers = self._state.answers
 
         self.statusBar().showMessage("Generating clarifying questions...")
+        self._sidebar.set_activity("Generating clarifying questions...")
 
         def work():
             return generate_questions(provider, job, candidate, answers)
@@ -428,13 +465,12 @@ class MainWindow(QMainWindow):
         if not questions:
             self._show_match_report()
             return
-        self._questions_page.load_questions(questions)
-        self._goto(3)
-
-    def _on_questions_answered(self, answers: AnswersBundle) -> None:
-        self._state.answers = answers
-        # Recompute the match with the new answers, then jump to the report.
-        self._start_match_after_answers()
+        dlg = QuestionsDialog(questions, parent=self)
+        if dlg.exec() == QDialog.Accepted:
+            self._state.answers = dlg.answers()
+            self._start_match_after_answers()
+        else:
+            self._show_match_report()
 
     def _start_match_after_answers(self) -> None:
         provider = self._provider
@@ -443,6 +479,7 @@ class MainWindow(QMainWindow):
         answers = self._state.answers
 
         self.statusBar().showMessage("Recomputing match with your answers...")
+        self._sidebar.set_activity("Recomputing match...")
 
         def work():
             return compute_match(provider, job, candidate, answers)
@@ -463,7 +500,12 @@ class MainWindow(QMainWindow):
     def _show_match_report(self) -> None:
         assert self._state.match_report is not None
         self._match_page.set_report(self._state.match_report)
-        self._goto(4)
+        self._sidebar.set_status("setup", "Done", "done")
+        self._sidebar.set_status("match", "Ready", "active")
+        self._sidebar.set_activity(
+            f"Match score: {self._state.match_report.overall_score} / 100"
+        )
+        self._goto("match")
 
     def _start_document_generation(self) -> None:
         provider = self._provider
@@ -474,7 +516,8 @@ class MainWindow(QMainWindow):
         evidence = self._state.evidence
         assert job and candidate and match_report and evidence
 
-        self.statusBar().showMessage("Generating tailored resume, cover letter, interview prep and gap plan...")
+        self.statusBar().showMessage("Generating tailored documents...")
+        self._sidebar.set_activity("Generating tailored documents...")
 
         def work():
             resume = generate_tailored_resume(provider, job, candidate, answers, evidence.items)
@@ -510,7 +553,10 @@ class MainWindow(QMainWindow):
         self._state.package = package
         self._docs_page.load_package(package)
         self.statusBar().clearMessage()
-        self._goto(5)
+        self._sidebar.set_status("match", "Done", "done")
+        self._sidebar.set_status("documents", "Ready", "active")
+        self._sidebar.set_activity("Documents ready - review and export")
+        self._goto("documents")
 
     def _on_save_analysis(self) -> None:
         if not self._state.package:
@@ -529,6 +575,8 @@ class MainWindow(QMainWindow):
             paths, entry = result
             self.statusBar().clearMessage()
             self._docs_page.set_status(f"Saved to {paths.folder}")
+            self._sidebar.set_status("documents", "Saved", "done")
+            self._sidebar.set_activity(f"Saved 9 files to {Path(paths.folder).name}")
             QMessageBox.information(
                 self,
                 "Analysis saved",
@@ -542,8 +590,27 @@ class MainWindow(QMainWindow):
             on_failed=self._on_workflow_failed,
         )
 
+    def _on_open_history_in_app(self, folder_path: str) -> None:
+        try:
+            payload = load_package_files(folder_path)
+        except OSError as exc:
+            QMessageBox.warning(self, "Could not load analysis", str(exc))
+            return
+        if not (payload.resume_md or payload.cover_letter_md or payload.match_report_md):
+            QMessageBox.information(
+                self,
+                "Folder is empty",
+                f"No analysis artefacts found in:\n{folder_path}",
+            )
+            return
+        self._docs_page.load_from_stored_analysis(payload)
+        self._sidebar.set_status("documents", "Loaded", "active")
+        self._sidebar.set_activity(f"Re-opened {Path(folder_path).name}")
+        self._goto("documents")
+
     def _on_workflow_failed(self, message: str) -> None:
         self.statusBar().clearMessage()
+        self._sidebar.set_activity("Workflow error")
         QMessageBox.critical(self, "Workflow error", message)
 
 

@@ -84,6 +84,39 @@ outputs/*
 !sample_data/*.docx
 !docs/**/*.pdf
 
+# HTML CVs / LinkedIn exports / generated styled resumes
+# (block private files but allow committed samples and generated outputs)
+*.html
+*.htm
+!sample_data/*.html
+!sample_data/*.htm
+!docs/**/*.html
+!outputs/**/*.html
+!outputs/**/*.htm
+
 # Local settings persisted by the app
 applypilot_settings.json
 .applypilot/
+
+# Python tooling
+.python-version
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Merge / backup leftovers
+*.bak
+*.orig
+*.rej
+
+# Crash dumps (Qt)
+*.crash
+*.dmp
+
+# Local cache & temp
+.cache/
+tmp/
+temp/
+.tmp/
+
+# JetBrains
+*.iml
