@@ -1,4 +1,4 @@
-"""Step 5: show generated documents in tabs, allow editing and export."""
+"""Generated documents screen: tabbed editors and exporters."""
 from __future__ import annotations
 
 import json
@@ -6,8 +6,10 @@ import logging
 from pathlib import Path
 
 from PySide6.QtCore import Signal
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -18,14 +20,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..models.documents import (
-    CoverLetter,
-    InterviewQuestion,
-    SkillGap,
-    TailoredResume,
-)
-from ..models.evidence import EvidenceItem
-from ..models.match import MatchReport
 from ..models.package import GeneratedApplicationPackage
 from ..services.export_service import (
     cover_letter_to_markdown,
@@ -35,6 +29,7 @@ from ..services.export_service import (
     resume_to_markdown,
     skill_gap_to_markdown,
 )
+from .theme import Tokens
 
 logger = logging.getLogger(__name__)
 
@@ -45,17 +40,24 @@ class DocumentsPage(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(28, 22, 28, 22)
-        layout.setSpacing(10)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        layout.addWidget(QLabel("<h2>Step 5 - Generated documents</h2>"))
-        layout.addWidget(QLabel(
-            "Review and tweak the text in each tab. The exporters use the text "
-            "exactly as shown here."
-        ))
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(36, 24, 36, 18)
+        body_layout.setSpacing(12)
+        outer.addWidget(body, stretch=1)
+
+        hint = QLabel(
+            "Review and tweak each document. Exporters use the text exactly as shown."
+        )
+        hint.setStyleSheet(f"color: {Tokens.text_muted}; font-size: 12px;")
+        body_layout.addWidget(hint)
 
         self._tabs = QTabWidget()
+        self._tabs.setDocumentMode(True)
         self._resume_edit = self._make_editor()
         self._cover_edit = self._make_editor()
         self._match_edit = self._make_editor(read_only=True)
@@ -68,48 +70,51 @@ class DocumentsPage(QWidget):
         self._tabs.addTab(self._interview_edit, "Interview Prep")
         self._tabs.addTab(self._gap_edit, "Skill Gap Plan")
         self._tabs.addTab(self._evidence_edit, "Evidence (read-only)")
-        layout.addWidget(self._tabs, stretch=1)
-
-        button_row = QHBoxLayout()
-        back = QPushButton("<- Back")
-        back.clicked.connect(self.back_clicked.emit)
-        button_row.addWidget(back)
-
-        button_row.addStretch(1)
-
-        self._export_md_btn = QPushButton("Export current tab as Markdown...")
-        self._export_md_btn.clicked.connect(self._export_current_md)
-        button_row.addWidget(self._export_md_btn)
-
-        self._export_html_btn = QPushButton("Export current tab as HTML...")
-        self._export_html_btn.clicked.connect(self._export_current_html)
-        button_row.addWidget(self._export_html_btn)
-
-        self._export_docx_btn = QPushButton("Export current tab as DOCX...")
-        self._export_docx_btn.clicked.connect(self._export_current_docx)
-        button_row.addWidget(self._export_docx_btn)
-
-        self._save_btn = QPushButton("Save full analysis")
-        self._save_btn.setMinimumWidth(180)
-        self._save_btn.setStyleSheet(
-            "QPushButton { background: #1f6feb; color: white; border: none;"
-            " border-radius: 6px; padding: 8px 14px; font-weight: 600; }"
-        )
-        self._save_btn.clicked.connect(self.save_analysis_clicked.emit)
-        button_row.addWidget(self._save_btn)
-        layout.addLayout(button_row)
+        body_layout.addWidget(self._tabs, stretch=1)
 
         self._status = QLabel("")
-        self._status.setStyleSheet("color: #a8a8b3;")
-        layout.addWidget(self._status)
+        self._status.setStyleSheet(f"color: {Tokens.text_muted}; font-size: 12px;")
+        body_layout.addWidget(self._status)
+
+        bar = QFrame()
+        bar.setStyleSheet(
+            f"background-color: {Tokens.bg};"
+            f" border-top: 1px solid {Tokens.border};"
+        )
+        bar_layout = QHBoxLayout(bar)
+        bar_layout.setContentsMargins(36, 12, 36, 12)
+        bar_layout.setSpacing(8)
+        back = QPushButton("Back to match")
+        back.setProperty("variant", "ghost")
+        back.clicked.connect(self.back_clicked.emit)
+        bar_layout.addWidget(back)
+        bar_layout.addStretch(1)
+
+        self._export_md_btn = QPushButton("Export MD")
+        self._export_md_btn.clicked.connect(self._export_current_md)
+        bar_layout.addWidget(self._export_md_btn)
+        self._export_html_btn = QPushButton("Export HTML")
+        self._export_html_btn.clicked.connect(self._export_current_html)
+        bar_layout.addWidget(self._export_html_btn)
+        self._export_docx_btn = QPushButton("Export DOCX")
+        self._export_docx_btn.clicked.connect(self._export_current_docx)
+        bar_layout.addWidget(self._export_docx_btn)
+
+        self._save_btn = QPushButton("Save full analysis")
+        self._save_btn.setProperty("variant", "primary")
+        self._save_btn.setMinimumWidth(180)
+        self._save_btn.clicked.connect(self.save_analysis_clicked.emit)
+        bar_layout.addWidget(self._save_btn)
+        outer.addWidget(bar)
 
     @staticmethod
     def _make_editor(read_only: bool = False) -> QPlainTextEdit:
         e = QPlainTextEdit()
         e.setReadOnly(read_only)
-        font = e.font()
-        font.setStyleHint(font.StyleHint.TypeWriter)
+        font = QFont()
+        font.setStyleHint(QFont.Monospace)
         font.setFamily("Cascadia Mono")
+        font.setPointSize(10)
         e.setFont(font)
         return e
 

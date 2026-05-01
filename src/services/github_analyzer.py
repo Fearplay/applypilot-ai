@@ -1,12 +1,23 @@
 """Fetch and analyse a candidate's public GitHub repositories.
 
-Uses the public REST API. With ``GITHUB_TOKEN`` (in ``.env``) the rate limit
-goes from 60 req/h to 5000 req/h, which is plenty for MVP usage.
+The user pastes their **GitHub profile URL** in the Setup page (e.g.
+``https://github.com/octocat``); we extract the username, then call the
+public REST API to get repository metadata (no scraping, no browser).
 
-We only download a small README excerpt (~5 KB) per repo and sniff the
-languages and topics. The README plus the repo metadata is then used to
-build a list of detected technologies and a rough relevance score against
-the target job posting.
+With ``GITHUB_TOKEN`` set in ``.env`` the unauthenticated rate limit (60
+req/h) jumps to 5000 req/h, which is plenty for MVP usage. The token is
+optional - skip it for occasional use.
+
+Per repo we keep:
+* metadata (stars, forks, primary language, topics, last update),
+* a ~5 KB README excerpt so the AI has real text to ground its summaries,
+* a list of detected technologies sniffed from README + topics,
+* a relevance score against the current :class:`JobPosting`.
+
+This module is the *only* place that talks to the GitHub network. Nothing
+about the AI provider depends on it directly: it converts URLs into
+:class:`GitHubProject` Pydantic models that the rest of the app already
+knew how to consume.
 """
 from __future__ import annotations
 
@@ -52,6 +63,33 @@ _TECH_KEYWORDS: tuple[str, ...] = (
 
 class GitHubError(RuntimeError):
     """Raised when the GitHub REST API returns an unrecoverable error."""
+
+
+def extract_username(value: str) -> str:
+    """Return the GitHub login from a profile URL or a bare ``@username`` string.
+
+    Examples accepted::
+
+        extract_username("octocat") == "octocat"
+        extract_username("@octocat") == "octocat"
+        extract_username("https://github.com/octocat") == "octocat"
+        extract_username("https://github.com/octocat/") == "octocat"
+        extract_username("https://www.github.com/octocat?tab=repos") == "octocat"
+    """
+    raw = (value or "").strip().lstrip("@")
+    if not raw:
+        return ""
+    match = re.match(
+        r"https?://(?:www\.)?github\.com/([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}[A-Za-z0-9])?)",
+        raw,
+        re.IGNORECASE,
+    )
+    if match:
+        return match.group(1)
+    # If it doesn't look like a URL, treat the value itself as the username.
+    if "/" in raw or " " in raw:
+        return ""
+    return raw
 
 
 def _headers(token: str | None) -> dict[str, str]:
@@ -205,4 +243,4 @@ def _fetch_languages(
     return list(payload.keys())
 
 
-__all__ = ["fetch_github_projects", "GitHubError"]
+__all__ = ["fetch_github_projects", "GitHubError", "extract_username"]

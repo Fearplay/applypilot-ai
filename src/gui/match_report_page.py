@@ -1,12 +1,14 @@
-"""Step 4: show the match report and a slice of the evidence preview."""
+"""Match report screen: score badge, category bars, lists and evidence."""
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QGridLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QListWidget,
+    QListWidgetItem,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -14,8 +16,118 @@ from PySide6.QtWidgets import (
 )
 
 from ..models.match import MatchReport
+from .theme import Tokens
 from .widgets.evidence_card import EvidenceCard
 from .widgets.score_badge import ScoreBadge
+
+
+class _CategoryBar(QFrame):
+    """Mini card with a label and a progress bar for a single category."""
+
+    def __init__(self, label: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setStyleSheet(
+            f"QFrame {{"
+            f"  background-color: {Tokens.surface_alt};"
+            f"  border: 1px solid {Tokens.border};"
+            f"  border-radius: 8px;"
+            f"}}"
+            f"QLabel {{ background: transparent; }}"
+        )
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 12)
+        layout.setSpacing(6)
+
+        head = QHBoxLayout()
+        self._label = QLabel(label)
+        self._label.setStyleSheet(
+            f"color: {Tokens.text_muted}; font-size: 11px;"
+            f" font-weight: 600; letter-spacing: 0.4px;"
+        )
+        head.addWidget(self._label, stretch=1)
+        self._value = QLabel("- / 100")
+        self._value.setStyleSheet(
+            f"color: {Tokens.text}; font-size: 13px; font-weight: 600;"
+        )
+        head.addWidget(self._value, alignment=Qt.AlignRight)
+        layout.addLayout(head)
+
+        self._bar = QProgressBar()
+        self._bar.setRange(0, 100)
+        self._bar.setValue(0)
+        self._bar.setTextVisible(False)
+        self._bar.setFixedHeight(6)
+        self._bar.setStyleSheet(
+            f"QProgressBar {{"
+            f"  background-color: {Tokens.surface_hover};"
+            f"  border-radius: 3px;"
+            f"  border: none;"
+            f"}}"
+            f"QProgressBar::chunk {{"
+            f"  background-color: {Tokens.accent};"
+            f"  border-radius: 3px;"
+            f"}}"
+        )
+        layout.addWidget(self._bar)
+
+    def set_value(self, value: int) -> None:
+        self._bar.setValue(max(0, min(value, 100)))
+        self._value.setText(f"{value} / 100")
+
+
+class _ListColumn(QFrame):
+    """Card containing a small heading + a borderless QListWidget."""
+
+    def __init__(self, title: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setStyleSheet(
+            f"QFrame {{"
+            f"  background-color: {Tokens.surface};"
+            f"  border: 1px solid {Tokens.border};"
+            f"  border-radius: 10px;"
+            f"}}"
+            f"QLabel {{ background: transparent; }}"
+        )
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(8)
+
+        head = QLabel(title.upper())
+        head.setStyleSheet(
+            f"color: {Tokens.text_muted}; font-size: 10px;"
+            f" font-weight: 700; letter-spacing: 1.2px;"
+        )
+        layout.addWidget(head)
+
+        self._list = QListWidget()
+        self._list.setStyleSheet(
+            f"QListWidget {{"
+            f"  background: transparent;"
+            f"  border: none;"
+            f"  outline: none;"
+            f"  color: {Tokens.text};"
+            f"}}"
+            f"QListWidget::item {{ padding: 6px 4px; border-radius: 4px; }}"
+            f"QListWidget::item:hover {{ background: {Tokens.surface_alt}; }}"
+        )
+        layout.addWidget(self._list, stretch=1)
+
+    def clear(self) -> None:
+        self._list.clear()
+
+    def add(self, text: str, accent: str | None = None) -> None:
+        item = QListWidgetItem(text)
+        if accent == "warn":
+            item.setForeground(Qt.GlobalColor.yellow)
+        layout_color: dict[str, str] = {
+            "ok":   Tokens.success,
+            "warn": Tokens.warn,
+            "bad":  Tokens.danger,
+        }
+        if accent and accent in layout_color:
+            from PySide6.QtGui import QColor
+            item.setForeground(QColor(layout_color[accent]))
+        self._list.addItem(item)
 
 
 class MatchReportPage(QWidget):
@@ -24,121 +136,140 @@ class MatchReportPage(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(28, 22, 28, 22)
-        layout.setSpacing(12)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        layout.addWidget(QLabel("<h2>Step 4 - Match report</h2>"))
-
-        top = QHBoxLayout()
-        self._badge = ScoreBadge(0, "Overall match")
-        self._badge.setMinimumSize(180, 180)
-        top.addWidget(self._badge)
-
-        cat_box = QWidget()
-        cat_layout = QGridLayout(cat_box)
-        cat_layout.setHorizontalSpacing(20)
-        cat_layout.setVerticalSpacing(6)
-        cat_layout.addWidget(QLabel("<b>Technical skills</b>"), 0, 0)
-        self._tech_lbl = QLabel("- / 100")
-        cat_layout.addWidget(self._tech_lbl, 0, 1)
-        cat_layout.addWidget(QLabel("<b>Experience</b>"), 1, 0)
-        self._exp_lbl = QLabel("- / 100")
-        cat_layout.addWidget(self._exp_lbl, 1, 1)
-        cat_layout.addWidget(QLabel("<b>Tools</b>"), 2, 0)
-        self._tools_lbl = QLabel("- / 100")
-        cat_layout.addWidget(self._tools_lbl, 2, 1)
-        cat_layout.addWidget(QLabel("<b>Process / QA</b>"), 3, 0)
-        self._proc_lbl = QLabel("- / 100")
-        cat_layout.addWidget(self._proc_lbl, 3, 1)
-        for lbl in (self._tech_lbl, self._exp_lbl, self._tools_lbl, self._proc_lbl):
-            lbl.setStyleSheet("color: #e8e8ee;")
-        top.addWidget(cat_box, stretch=1)
-        layout.addLayout(top)
-
-        lists = QHBoxLayout()
-        lists.setSpacing(12)
-
-        matched_box = QVBoxLayout()
-        matched_box.addWidget(QLabel("<b>Matched requirements</b>"))
-        self._matched_list = QListWidget()
-        matched_box.addWidget(self._matched_list)
-        lists.addLayout(matched_box, stretch=1)
-
-        missing_box = QVBoxLayout()
-        missing_box.addWidget(QLabel("<b>Missing requirements / risky gaps</b>"))
-        self._missing_list = QListWidget()
-        missing_box.addWidget(self._missing_list)
-        lists.addLayout(missing_box, stretch=1)
-
-        ats_box = QVBoxLayout()
-        ats_box.addWidget(QLabel("<b>ATS keywords</b>"))
-        self._ats_list = QListWidget()
-        ats_box.addWidget(self._ats_list)
-        lists.addLayout(ats_box, stretch=1)
-
-        layout.addLayout(lists, stretch=1)
-
-        layout.addWidget(QLabel("<b>Evidence preview</b>"))
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        self._evidence_host = QWidget()
-        self._evidence_layout = QVBoxLayout(self._evidence_host)
-        self._evidence_layout.setContentsMargins(2, 2, 2, 2)
-        self._evidence_layout.setSpacing(6)
-        scroll.setWidget(self._evidence_host)
-        scroll.setMinimumHeight(160)
-        layout.addWidget(scroll, stretch=1)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        outer.addWidget(scroll, stretch=1)
 
-        button_row = QHBoxLayout()
-        back = QPushButton("<- Back")
-        back.clicked.connect(self.back_clicked.emit)
-        button_row.addWidget(back)
-        button_row.addStretch(1)
-        self._gen_btn = QPushButton("Generate documents ->")
-        self._gen_btn.setMinimumWidth(220)
-        self._gen_btn.clicked.connect(self.generate_clicked.emit)
-        self._gen_btn.setStyleSheet(
-            "QPushButton { background: #1f6feb; color: white; border: none;"
-            " border-radius: 6px; padding: 8px 14px; font-weight: 600; }"
+        host = QWidget()
+        layout = QVBoxLayout(host)
+        layout.setContentsMargins(36, 30, 36, 24)
+        layout.setSpacing(20)
+        scroll.setWidget(host)
+
+        # Top: badge + 4 category bars
+        top = QHBoxLayout()
+        top.setSpacing(20)
+
+        badge_box = QFrame()
+        badge_box.setStyleSheet(
+            f"QFrame {{ background-color: {Tokens.surface};"
+            f" border: 1px solid {Tokens.border}; border-radius: 12px; }}"
         )
-        button_row.addWidget(self._gen_btn)
-        layout.addLayout(button_row)
+        badge_layout = QVBoxLayout(badge_box)
+        badge_layout.setContentsMargins(20, 18, 20, 18)
+        badge_layout.setSpacing(10)
+        badge_head = QLabel("OVERALL")
+        badge_head.setStyleSheet(
+            f"color: {Tokens.text_muted}; font-size: 10px;"
+            f" font-weight: 700; letter-spacing: 1.4px;"
+        )
+        badge_layout.addWidget(badge_head)
+        self._badge = ScoreBadge(0, "")
+        self._badge.setMinimumSize(180, 180)
+        badge_layout.addWidget(self._badge, alignment=Qt.AlignCenter)
+        top.addWidget(badge_box)
+
+        cats_box = QVBoxLayout()
+        cats_box.setSpacing(10)
+        self._tech = _CategoryBar("Technical skills")
+        self._exp = _CategoryBar("Experience")
+        self._tools = _CategoryBar("Tools")
+        self._proc = _CategoryBar("Process / QA")
+        for w in (self._tech, self._exp, self._tools, self._proc):
+            cats_box.addWidget(w)
+        cats_wrap = QFrame()
+        cats_wrap.setStyleSheet("QFrame { background: transparent; }")
+        cats_wrap.setLayout(cats_box)
+        top.addWidget(cats_wrap, stretch=1)
+        layout.addLayout(top)
+
+        # Three list columns
+        lists = QHBoxLayout()
+        lists.setSpacing(12)
+        self._matched = _ListColumn("Matched")
+        self._missing = _ListColumn("Missing / risky gaps")
+        self._ats = _ListColumn("ATS keywords")
+        for col in (self._matched, self._missing, self._ats):
+            lists.addWidget(col, stretch=1)
+        layout.addLayout(lists)
+
+        # Evidence header + scrollable cards
+        ev_head = QLabel("EVIDENCE PREVIEW")
+        ev_head.setStyleSheet(
+            f"color: {Tokens.text_muted}; font-size: 10px;"
+            f" font-weight: 700; letter-spacing: 1.4px; padding-top: 6px;"
+        )
+        layout.addWidget(ev_head)
+
+        ev_scroll = QScrollArea()
+        ev_scroll.setWidgetResizable(True)
+        ev_scroll.setFrameShape(QScrollArea.NoFrame)
+        ev_scroll.setMinimumHeight(220)
+        self._ev_host = QWidget()
+        self._ev_layout = QVBoxLayout(self._ev_host)
+        self._ev_layout.setContentsMargins(0, 0, 4, 0)
+        self._ev_layout.setSpacing(8)
+        ev_scroll.setWidget(self._ev_host)
+        layout.addWidget(ev_scroll)
+
+        # Action bar
+        bar = QFrame()
+        bar.setStyleSheet(
+            f"background-color: {Tokens.bg};"
+            f" border-top: 1px solid {Tokens.border};"
+        )
+        bar_layout = QHBoxLayout(bar)
+        bar_layout.setContentsMargins(36, 14, 36, 14)
+        back = QPushButton("Back to setup")
+        back.setProperty("variant", "ghost")
+        back.clicked.connect(self.back_clicked.emit)
+        bar_layout.addWidget(back)
+        bar_layout.addStretch(1)
+        self._gen_btn = QPushButton("Generate documents")
+        self._gen_btn.setProperty("variant", "primary")
+        self._gen_btn.setMinimumWidth(200)
+        self._gen_btn.clicked.connect(self.generate_clicked.emit)
+        bar_layout.addWidget(self._gen_btn)
+        outer.addWidget(bar)
 
     # ----------------------------------------------------------- public
     def set_report(self, report: MatchReport) -> None:
-        self._badge.set_score(report.overall_score, "Overall match")
+        self._badge.set_score(report.overall_score, "")
         cs = report.category_scores
-        self._tech_lbl.setText(f"{cs.technical_skills} / 100")
-        self._exp_lbl.setText(f"{cs.experience} / 100")
-        self._tools_lbl.setText(f"{cs.tools} / 100")
-        self._proc_lbl.setText(f"{cs.qa_process} / 100")
+        self._tech.set_value(cs.technical_skills)
+        self._exp.set_value(cs.experience)
+        self._tools.set_value(cs.tools)
+        self._proc.set_value(cs.qa_process)
 
-        self._matched_list.clear()
+        self._matched.clear()
         for r in report.matched_requirements:
-            self._matched_list.addItem(r)
+            self._matched.add(r, accent="ok")
 
-        self._missing_list.clear()
+        self._missing.clear()
         for r in report.missing_requirements:
-            self._missing_list.addItem(r)
+            self._missing.add(r, accent="bad")
         for r in report.risky_gaps:
-            self._missing_list.addItem(f"[risky] {r}")
+            self._missing.add(f"[risky] {r}", accent="warn")
 
-        self._ats_list.clear()
+        self._ats.clear()
         for r in report.ats_keywords_present:
-            self._ats_list.addItem(f"+ {r}")
+            self._ats.add(f"+ {r}", accent="ok")
         for r in report.ats_keywords_missing:
-            self._ats_list.addItem(f"- {r}")
+            self._ats.add(f"- {r}", accent="bad")
 
-        # Evidence cards
-        while self._evidence_layout.count():
-            item = self._evidence_layout.takeAt(0)
+        while self._ev_layout.count():
+            item = self._ev_layout.takeAt(0)
             w = item.widget()
             if w:
                 w.deleteLater()
         for ev in report.evidence[:12]:
-            self._evidence_layout.addWidget(EvidenceCard(ev))
-        self._evidence_layout.addStretch(1)
+            self._ev_layout.addWidget(EvidenceCard(ev))
+        self._ev_layout.addStretch(1)
 
 
 __all__ = ["MatchReportPage"]

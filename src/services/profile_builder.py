@@ -18,12 +18,14 @@ def build_candidate_profile(
     github_projects: Sequence[GitHubProject] = (),
 ) -> CandidateProfile:
     """Delegate to the AI provider, with sensible defaults if everything is empty."""
-    if not any([cv_text.strip(), linkedin_text.strip(), github_username, list(github_projects)]):
+    if not any(
+        [cv_text.strip(), linkedin_text.strip(), github_username, list(github_projects)]
+    ):
         logger.warning("All candidate inputs were empty - returning a stub profile.")
         return CandidateProfile(
             full_name="Anonymous Candidate",
             summary=(
-                "No CV, LinkedIn export or GitHub username was provided. "
+                "No CV, LinkedIn export or GitHub profile was provided. "
                 "Add inputs to get a tailored analysis."
             ),
         )

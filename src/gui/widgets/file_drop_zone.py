@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from ..theme import Tokens
 
 
 class FileDropZone(QFrame):
@@ -33,29 +35,30 @@ class FileDropZone(QFrame):
         self._current_path: Path | None = None
 
         self.setObjectName("FileDropZone")
-        self.setFrameShape(QFrame.StyledPanel)
         self.setAcceptDrops(True)
-        self.setMinimumHeight(110)
+        self.setMinimumHeight(96)
         self._apply_style(active=False)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(6)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(8)
 
         self._label = QLabel(label)
-        self._label.setStyleSheet("color: #e8e8ee; font-weight: bold;")
+        self._label.setStyleSheet(
+            f"color: {Tokens.text}; font-weight: 600; font-size: 13px;"
+        )
         layout.addWidget(self._label)
 
         self._hint = QLabel(
             f"Drag &amp; drop a file ({', '.join(self._extensions)}) or browse."
         )
-        self._hint.setStyleSheet("color: #a8a8b3;")
+        self._hint.setStyleSheet(f"color: {Tokens.text_muted}; font-size: 12px;")
         layout.addWidget(self._hint)
 
         row = QHBoxLayout()
         row.setSpacing(6)
         self._path_label = QLabel("No file selected")
-        self._path_label.setStyleSheet("color: #a8a8b3;")
+        self._path_label.setStyleSheet(f"color: {Tokens.text_muted}; font-size: 12px;")
         row.addWidget(self._path_label, stretch=1)
 
         browse = QPushButton("Browse...")
@@ -63,6 +66,7 @@ class FileDropZone(QFrame):
         row.addWidget(browse)
 
         clear = QPushButton("Clear")
+        clear.setProperty("variant", "ghost")
         clear.clicked.connect(self.clear)
         row.addWidget(clear)
         layout.addLayout(row)
@@ -75,7 +79,9 @@ class FileDropZone(QFrame):
     def clear(self) -> None:
         self._current_path = None
         self._path_label.setText("No file selected")
-        self._path_label.setStyleSheet("color: #a8a8b3;")
+        self._path_label.setStyleSheet(
+            f"color: {Tokens.text_muted}; font-size: 12px;"
+        )
 
     def set_path(self, path: Path | str | None) -> None:
         if path is None:
@@ -86,24 +92,31 @@ class FileDropZone(QFrame):
             self._path_label.setText(
                 f"Unsupported file type: {p.suffix or '(no ext)'}"
             )
-            self._path_label.setStyleSheet("color: #cf6f1c;")
+            self._path_label.setStyleSheet(
+                f"color: {Tokens.warn}; font-size: 12px;"
+            )
             return
         self._current_path = p
-        self._path_label.setText(str(p))
-        self._path_label.setStyleSheet("color: #e8e8ee;")
+        self._path_label.setText(p.name)
+        self._path_label.setToolTip(str(p))
+        self._path_label.setStyleSheet(
+            f"color: {Tokens.text}; font-size: 12px;"
+        )
         self.file_selected.emit(p)
 
     # ----------------------------------------------------------- helpers
     def _apply_style(self, active: bool) -> None:
         if active:
             self.setStyleSheet(
-                "#FileDropZone { background: #2c3344; border: 2px dashed #5b8def; "
-                "border-radius: 8px; }"
+                f"#FileDropZone {{ background-color: {Tokens.surface_hover};"
+                f" border: 1.5px dashed {Tokens.accent}; border-radius: 10px; }}"
             )
         else:
             self.setStyleSheet(
-                "#FileDropZone { background: #2a2d35; border: 2px dashed #4a4d55; "
-                "border-radius: 8px; }"
+                f"#FileDropZone {{ background-color: {Tokens.surface_alt};"
+                f" border: 1.5px dashed {Tokens.border_strong};"
+                f" border-radius: 10px; }}"
+                f"#FileDropZone:hover {{ border-color: {Tokens.text_dim}; }}"
             )
 
     def _allowed(self, path: Path) -> bool:

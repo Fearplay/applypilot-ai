@@ -88,6 +88,10 @@ class CandidateProfile(BaseModel):
     raw_cv_text: str = Field(default="", description="Verbatim text extracted from CV.")
     raw_linkedin_text: str = Field(default="", description="Verbatim text from LinkedIn export.")
     github_username: str | None = None
+    github_repo_urls: list[str] = Field(
+        default_factory=list,
+        description="Public GitHub repo URLs the candidate provided manually (no REST API).",
+    )
 
 
 __all__ = [

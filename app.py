@@ -35,10 +35,12 @@ def main() -> int:
 
     from src.ai.provider_factory import build_provider
     from src.gui.main_window import MainWindow
+    from src.gui.theme import apply_theme
 
     app = QApplication(sys.argv)
     app.setApplicationName("ApplyPilot AI")
     app.setOrganizationName("ApplyPilot")
+    apply_theme(app)
 
     provider = build_provider(settings)
     window = MainWindow(settings=settings, provider=provider)

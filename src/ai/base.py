@@ -42,7 +42,13 @@ class BaseAIProvider(ABC):
         github_username: str | None = None,
         github_projects: Sequence[GitHubProject] = (),
     ) -> CandidateProfile:
-        """Merge raw candidate inputs into a structured CandidateProfile."""
+        """Merge raw candidate inputs into a structured CandidateProfile.
+
+        ``github_projects`` should be the result of
+        :func:`src.services.github_analyzer.fetch_github_projects` (already
+        fetched, structured metadata). Providers must not invent additional
+        repositories - only the items in this list exist.
+        """
 
     # --------------------------------------------------------- clarifying Q
     @abstractmethod

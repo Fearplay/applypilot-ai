@@ -15,6 +15,14 @@ Usage::
 
 The callable runs in a worker thread; ``on_finished`` / ``on_failed`` are
 called back on the GUI thread via Qt signals.
+
+Implementation notes
+--------------------
+``QThreadPool.start()`` takes ownership of the ``QRunnable`` on the C++ side,
+but the *Python* wrapper around ``WorkerSignals`` (and any lambdas connected
+to its signals) can still be garbage-collected before the worker fires its
+finish signal. To prevent that we keep every active worker in a process-wide
+set and release it from the slot that runs once the worker is done.
 """
 from __future__ import annotations
 
@@ -31,6 +39,7 @@ logger = logging.getLogger(__name__)
 class WorkerSignals(QObject):
     finished = Signal(object)
     failed = Signal(str)
+    done = Signal()  # always fires after finished/failed, used for cleanup
 
 
 class _Worker(QRunnable):
@@ -48,9 +57,21 @@ class _Worker(QRunnable):
         except Exception as exc:
             logger.exception("Background worker failed")
             tb = traceback.format_exc(limit=2)
-            self.signals.failed.emit(f"{exc.__class__.__name__}: {exc}\n{tb}")
+            try:
+                self.signals.failed.emit(f"{exc.__class__.__name__}: {exc}\n{tb}")
+            finally:
+                self.signals.done.emit()
         else:
-            self.signals.finished.emit(result)
+            try:
+                self.signals.finished.emit(result)
+            finally:
+                self.signals.done.emit()
+
+
+# Keeps every in-flight worker alive until its `done` signal arrives. Without
+# this the Python wrapper around ``WorkerSignals`` may be collected before the
+# pooled C++ thread finishes running, which silently drops the callbacks.
+_LIVE_WORKERS: set[_Worker] = set()
 
 
 def run_in_background(
@@ -67,6 +88,8 @@ def run_in_background(
         worker.signals.finished.connect(on_finished)
     if on_failed is not None:
         worker.signals.failed.connect(on_failed)
+    _LIVE_WORKERS.add(worker)
+    worker.signals.done.connect(lambda w=worker: _LIVE_WORKERS.discard(w))
     pool.start(worker)
     return worker
 
