@@ -70,6 +70,7 @@ It is also a portfolio project for QA / Junior Python / Junior AI roles, so the 
 | --- | --- | --- |
 | Language | Python 3.11+ | type hints, async-friendly, Pydantic v2 |
 | GUI | **PySide6** (LGPL-3.0) | first-class Qt bindings, no GPL contagion |
+| Theme | Centralised QSS in `src/gui/theme.py` | one place to tweak the dark UI tokens |
 | Data validation | Pydantic v2 | structured AI outputs + strict typing |
 | AI HTTP | `requests` only | works with every OpenAI-compatible endpoint |
 | Job URL fetch | `trafilatura`, `requests` + `beautifulsoup4` | best signal-to-noise on job pages |
@@ -82,13 +83,16 @@ It is also a portfolio project for QA / Junior Python / Junior AI roles, so the 
 
 ```mermaid
 flowchart TB
-    subgraph GUI [PySide6 GUI - QStackedWidget]
-        Welcome[Welcome / Mode banner] --> JobIn[Job Input]
-        JobIn --> CandIn[Candidate Input]
-        CandIn --> Questions[Clarifying Questions]
-        Questions --> Report[Match Report]
-        Report --> Docs[Generated Documents]
-        Docs --> History[History]
+    subgraph GUI [PySide6 GUI - 4 sections]
+        Setup[Setup<br/>job + CV + GitHub URLs]
+        Match[Match Report]
+        Docs[Generated Documents]
+        Hist[History]
+        QDlg["Clarifying Questions<br/>(modal dialog)"]
+        Setup --> Match
+        Match -. "if evidence < 85%" .-> QDlg
+        QDlg --> Match
+        Match --> Docs
     end
 
     subgraph Services [src/services]
@@ -99,11 +103,11 @@ flowchart TB
         GhAnalyzer[github_analyzer]
         ProfBuilder[profile_builder]
         EvCheck[evidence_checker]
-        Match[match_engine]
+        MatchSvc[match_engine]
         QGen[question_generator]
         DocGen[resume / cover / interview / gap generators]
         Export[export_service]
-        Hist[history_service]
+        HistSvc[history_service]
     end
 
     subgraph AI [src/ai - provider-agnostic]
@@ -119,7 +123,7 @@ flowchart TB
 
     GUI -->|background QThread| Services
     Services -->|structured Pydantic outputs| AI
-    Services -->|files| FS["outputs/<company-role>/ + outputs/history.json"]
+    Services -->|files| FS["outputs/company-role/ + outputs/history.json"]
 ```
 
 **Key principle:** the GUI never calls AI directly. Every AI call goes through `services/*` which work with Pydantic models, so business logic is testable without a window manager.
@@ -231,17 +235,26 @@ AI_MODEL=gpt-4o-mini
 
 `.env` is git-ignored, so your key never leaks. Every real AI call is also logged to `logs/ai_requests.log` (toggle via `AI_REQUEST_LOG=true|false`).
 
-Optional: set `GITHUB_TOKEN` to raise the GitHub REST API rate limit from 60 req/h to 5000 req/h when the app analyses a candidate's repositories.
+> **GitHub:** paste your **profile URL** (`https://github.com/your-username`) into the Setup page and the app fetches your public repositories from the GitHub REST API. Optionally set `GITHUB_TOKEN` in `.env` to lift the rate limit from 60 req/h (anonymous) to 5000 req/h. Tick *Skip GitHub* in the Setup card if you don't want any network call to github.com.
 
 ## Workflow walkthrough
 
-1. **Welcome** - check that the banner says what you expect (demo vs real AI). Optionally click **Try with sample data**.
-2. **Job input** - paste the URL, click **Fetch** (uses `trafilatura` then `requests + BeautifulSoup`); if the site blocks scraping, paste the description manually. Click **Analyze job**.
-3. **Candidate input** - drop your CV (PDF / DOCX / TXT), optionally a LinkedIn export and a GitHub username. Click **Analyze profile**.
-4. **(Auto-routed)** - if required-skill evidence coverage is below 85% or any required skill has no evidence at all, the **Clarifying Questions** page appears. For each question pick *practical experience*, *learning in progress* or *no - not yet*. Click **Continue**.
-5. **Match report** - review the score badge, category scores, matched/missing skills, ATS keyword coverage and the evidence cards. Click **Generate documents**.
-6. **Generated documents** - tabs for resume, cover letter, match report, interview prep, skill gap plan and evidence report. Edit the text inline. Use the per-tab Markdown / HTML / DOCX export buttons or click **Save full analysis** to write all 9 artefacts to `outputs/<company>-<role>-<timestamp>/`.
-7. **History** - the History tab loads `outputs/history.json` and lets you reopen any past output folder.
+The UI is now a single-window dashboard with four sections in the left sidebar. The active provider is shown as a small chip in the header (orange "Demo" or green "Live AI").
+
+1. **Setup** - one scrollable page with three cards:
+   - *Job posting* - URL fetch (uses `trafilatura` then `requests + BeautifulSoup`) or paste the text directly.
+   - *Resume & profile* - drop your CV (PDF / DOCX / TXT) and optionally a LinkedIn export.
+   - *GitHub profile* - paste a profile URL like `https://github.com/your-username` (or just the bare username); the app extracts the login and fetches your public repos via the GitHub REST API. Tick *Skip GitHub* to disable the network call entirely.
+
+   Click **Run analysis** at the bottom to fire the whole pipeline (job parse + GitHub fetch + profile build + match) in one go.
+
+2. **Clarifying questions** - if required-skill evidence coverage drops below 85%, a modal dialog appears. For each question pick *practical experience*, *learning in progress* or *no - not yet*. Click **Continue analysis** and the match report refreshes.
+
+3. **Match report** - score badge, four category bars, three columns (matched / missing / ATS) and an evidence preview. Click **Generate documents**.
+
+4. **Documents** - tabs for resume, cover letter, match report, interview prep, skill gap plan and evidence report. Edit the text inline. Use the per-tab **Export MD / HTML / DOCX** buttons or click **Save full analysis** to write all 9 artefacts to `outputs/<company>-<role>-<timestamp>/`.
+
+5. **History** - the History tab loads `outputs/history.json` and lets you reopen any past output folder. Empty state shows a hint when there are no analyses yet.
 
 ## Project structure
 
@@ -252,7 +265,15 @@ applypilot-ai/
   app.py                    # entry point: python app.py
   src/
     config.py               # dotenv loader, Settings dataclass
-    gui/                    # PySide6 main window + 7 pages + widgets + workers
+    gui/                    # PySide6 main window + 4 sections + widgets + workers + theme
+      theme.py              # centralised dark QSS + colour tokens
+      main_window.py        # sidebar + header + section stack
+      setup_page.py         # job + CV + GitHub URLs (one screen)
+      match_report_page.py
+      documents_page.py
+      history_page.py
+      questions_dialog.py   # modal clarifying-questions dialog
+      widgets/              # Sidebar, StatusChip, SectionCard, FileDropZone, ScoreBadge, EvidenceCard
     ai/
       base.py               # BaseAIProvider ABC
       fake_provider.py      # offline demo provider, default
@@ -261,10 +282,11 @@ applypilot-ai/
       prompts.py            # role-aware system + user prompts
       role_detector.py      # title -> RoleType classifier
     services/               # business logic: fetchers, parsers, generators, exporters, history
+                            # github_analyzer.py - REST API for the candidate's public repos
     models/                 # Pydantic schemas (job, candidate, evidence, match, documents, package)
     storage/file_history.py # outputs/history.json reader + writer
     utils/                  # text_cleaning, file_utils, slugify, privacy, logging_config
-  tests/                    # 52 pytest tests; never call real AI
+  tests/                    # 64 pytest tests; never call real AI
   sample_data/              # anonymised CV, LinkedIn, JD and GitHub username
   outputs/                  # user-generated outputs, .gitignored except .gitkeep
 ```
@@ -300,7 +322,7 @@ Each history entry stores `date`, `company`, `role`, `job_url`, `match_score`, `
 pytest -q
 ```
 
-The test suite is hermetic. An autouse pytest fixture replaces `requests.post` with a function that fails the test loudly if anything tries to call a real AI provider. The 52 tests cover:
+The test suite is hermetic. An autouse pytest fixture replaces `requests.post` with a function that fails the test loudly if anything tries to call a real AI provider. The 64 tests cover:
 
 - All 8 `FakeAIProvider` methods returning valid Pydantic models.
 - 21 `RoleType` detector cases for IT roles + a non-IT fallback.
@@ -349,7 +371,7 @@ git branch -M main
 git push -u origin main
 ```
 
-For this MVP the work was developed on the `feat/initial-mvp-scaffold` branch and merged via PR; see `git log --graph --oneline` for the per-commit history.
+The MVP scaffold was developed on `feat/initial-mvp-scaffold` (PR #1, merged into `main`). The current modern UI redesign and GitHub-without-REST rework live on `feat/modern-ui` and target `main` directly. See `git log --graph --oneline` for the per-commit history.
 
 ## License
 
