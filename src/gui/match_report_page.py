@@ -78,7 +78,12 @@ class _CategoryBar(QFrame):
 class _ListColumn(QFrame):
     """Card containing a small heading + a borderless QListWidget."""
 
-    def __init__(self, title: str, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        title: str,
+        tooltip: str = "",
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setStyleSheet(
             f"QFrame {{"
@@ -97,6 +102,9 @@ class _ListColumn(QFrame):
             f"color: {Tokens.text_muted}; font-size: 10px;"
             f" font-weight: 700; letter-spacing: 1.2px;"
         )
+        if tooltip:
+            head.setToolTip(tooltip)
+            self.setToolTip(tooltip)
         layout.addWidget(head)
 
         self._list = QListWidget()
@@ -189,11 +197,43 @@ class MatchReportPage(QWidget):
         layout.addLayout(top)
 
         # Three list columns
+        lists_legend = QLabel(
+            "Hover over each column heading for an explanation of how the "
+            "AI bucketed these skills."
+        )
+        lists_legend.setWordWrap(True)
+        lists_legend.setStyleSheet(
+            f"color: {Tokens.text_dim}; font-size: 11px; font-style: italic;"
+        )
+        layout.addWidget(lists_legend)
+
         lists = QHBoxLayout()
         lists.setSpacing(12)
-        self._matched = _ListColumn("Matched")
-        self._missing = _ListColumn("Missing / risky gaps")
-        self._ats = _ListColumn("ATS keywords")
+        self._matched = _ListColumn(
+            "Matched",
+            tooltip=(
+                "Skills required by the job that have evidence in your CV, "
+                "LinkedIn, GitHub READMEs or in answers you marked as "
+                "'practical experience'."
+            ),
+        )
+        self._missing = _ListColumn(
+            "Missing / risky gaps",
+            tooltip=(
+                "Required or nice-to-have skills with no evidence at all. "
+                "The [risky] tag marks REQUIRED skills - leaving these out "
+                "is usually an automatic eliminator in ATS scans."
+            ),
+        )
+        self._ats = _ListColumn(
+            "ATS keywords",
+            tooltip=(
+                "High-signal phrases the hiring system ranks resumes by. "
+                "+ means the keyword appears in your profile, - means it is "
+                "missing. ATS bots (Workday, Greenhouse, Lever) sort "
+                "applicants partly by literal keyword overlap."
+            ),
+        )
         for col in (self._matched, self._missing, self._ats):
             lists.addWidget(col, stretch=1)
         layout.addLayout(lists)

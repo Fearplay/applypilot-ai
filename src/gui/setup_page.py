@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QThreadPool, Signal
+from PySide6.QtCore import Qt, QThreadPool, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
@@ -175,13 +175,13 @@ class SetupPage(QWidget):
             eyebrow="Step 2",
         )
         self._cv_drop = FileDropZone(
-            "CV (PDF / DOCX / TXT) - required",
-            extensions=(".pdf", ".docx", ".txt"),
+            "CV (PDF / DOCX / TXT / HTML) - required",
+            extensions=(".pdf", ".docx", ".txt", ".html", ".htm"),
         )
         card.add_widget(self._cv_drop)
         self._li_drop = FileDropZone(
-            "LinkedIn export (PDF / TXT) - optional",
-            extensions=(".pdf", ".txt"),
+            "LinkedIn export (PDF / TXT / HTML) - optional",
+            extensions=(".pdf", ".txt", ".html", ".htm"),
         )
         card.add_widget(self._li_drop)
         return card
@@ -207,9 +207,16 @@ class SetupPage(QWidget):
         card.add_widget(self._gh_skip)
 
         self._gh_hint = QLabel(
-            "Without GITHUB_TOKEN you have ~60 requests per hour - plenty for "
-            "one analysis but you may hit the limit if you run many in a row."
+            "Without <code>GITHUB_TOKEN</code>: ~60 anonymous requests per "
+            "hour from your IP. With a token in <code>.env</code>: 5000/h. "
+            "The AI provider never touches GitHub itself - the app calls the "
+            "public REST API directly. Generate a fine-grained read-only "
+            "token at "
+            "<a href=\"https://github.com/settings/personal-access-tokens\">"
+            "github.com/settings/personal-access-tokens</a>."
         )
+        self._gh_hint.setTextFormat(Qt.RichText)
+        self._gh_hint.setOpenExternalLinks(True)
         self._gh_hint.setWordWrap(True)
         self._gh_hint.setStyleSheet(
             f"color: {Tokens.text_dim}; font-size: 11px; font-style: italic;"

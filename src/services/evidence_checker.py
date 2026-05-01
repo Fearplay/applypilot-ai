@@ -28,6 +28,35 @@ def _contains_skill(skill: str, text: str) -> bool:
     return n in _norm(text)
 
 
+_SEPARATOR_LINE_RE = re.compile(r"^\s*[=\-_*~#]{3,}\s*$", re.MULTILINE)
+_MULTI_NEWLINE_RE = re.compile(r"\n{2,}")
+_MULTI_SPACE_RE = re.compile(r"[ \t]{2,}")
+
+
+def _clean_snippet(text: str, *, limit: int = 200) -> str:
+    """Strip noisy ASCII separators and collapse whitespace in an evidence snippet.
+
+    The CV / LinkedIn parsers emit raw text that often contains lines like
+    ``===========`` (PDF/TXT decorative dividers) which look terrible in the
+    Match report's evidence preview. We drop those lines, normalise newlines
+    and trim to ``limit`` chars while preferring not to cut mid-word.
+    """
+    if not text:
+        return ""
+    cleaned = _SEPARATOR_LINE_RE.sub("", text)
+    cleaned = "\n".join(line.rstrip() for line in cleaned.splitlines() if line.strip())
+    cleaned = _MULTI_NEWLINE_RE.sub("\n", cleaned)
+    cleaned = _MULTI_SPACE_RE.sub(" ", cleaned)
+    cleaned = cleaned.strip()
+    if len(cleaned) <= limit:
+        return cleaned
+    cut = cleaned[:limit]
+    last_space = cut.rfind(" ")
+    if last_space > limit * 0.7:
+        cut = cut[:last_space]
+    return cut.rstrip(",;:.- ") + "..."
+
+
 def _scan_text_for_skill(skill: str, text: str, source_type: str, source_name: str) -> EvidenceItem | None:
     if not text or not skill:
         return None
@@ -44,13 +73,13 @@ def _scan_text_for_skill(skill: str, text: str, source_type: str, source_name: s
     else:
         start = max(match.start() - 60, 0)
         end = min(match.end() + 60, len(text))
-        snippet = text[start:end].strip()
+        snippet = text[start:end]
     return EvidenceItem(
         claim=f"Candidate has experience with {skill}.",
         skill=skill,
         source_type=source_type,  # type: ignore[arg-type]
         source_name=source_name,
-        evidence_text=snippet[:300],
+        evidence_text=_clean_snippet(snippet),
         confidence="medium",
     )
 
@@ -74,7 +103,7 @@ def _scan_project_for_skill(skill: str, project: GitHubProject) -> EvidenceItem 
         skill=skill,
         source_type="github",
         source_name=f"github:{project.name}",
-        evidence_text=(project.description or project.name)[:300],
+        evidence_text=_clean_snippet(project.description or project.name),
         confidence="high" if skill.lower() in {l.lower() for l in project.languages} else "medium",
     )
 

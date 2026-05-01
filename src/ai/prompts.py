@@ -147,9 +147,17 @@ _GLOBAL_RULES = (
     "a clarifying question - do not assume.\n"
     "3. Always return STRICT JSON that matches the requested schema. No "
     "markdown fences, no commentary, no extra fields.\n"
-    "4. Use neutral, professional, ATS-friendly English. Prefer concrete, "
+    "4. Use neutral, professional, ATS-friendly prose. Prefer concrete, "
     "measurable bullets ('reduced regression cycle by 30%') over vague claims.\n"
-    "5. Your tone matches the persona below."
+    "5. Your tone matches the persona below.\n"
+    "6. LANGUAGE MATCHING: detect the language of the JOB POSTING text and "
+    "produce ALL human-facing outputs (professional summary, resume bullets, "
+    "cover letter, interview questions, gap rationales, recommendations) in "
+    "the SAME language. If the job is written in Czech, write Czech. "
+    "Otherwise default to English. Schema field names, RoleType values and "
+    "any technical enums (e.g. 'practical_experience', 'critical') stay in "
+    "English regardless of the job language. Never mix languages within a "
+    "single human-facing field."
 )
 
 
@@ -249,7 +257,9 @@ def match_report_user_prompt(
     return (
         "Produce a MatchReport that scores how well the candidate matches the "
         "job. Use ONLY the evidence and confirmed user answers - do not score "
-        "skills the candidate has not demonstrated.\n\n"
+        "skills the candidate has not demonstrated. Write any free-text "
+        "fields (summary, recommended_improvements) in the SAME language as "
+        "the job posting (Czech or English).\n\n"
         "JOB:\n" + _dump(job) + "\n\n"
         "CANDIDATE:\n" + _dump(candidate) + "\n\n"
         "USER ANSWERS:\n" + _dump(answers) + "\n\n"
@@ -273,7 +283,11 @@ def resume_user_prompt(
         "answers in a Summary line, not as past experience. Skip 'omit'.\n"
         "- Professional summary should be 2-3 sentences, role-targeted.\n"
         "- Set role_targeted_for to the job title.\n"
-        "- Do NOT include the candidate's contact details twice.\n\n"
+        "- Do NOT include the candidate's contact details twice.\n"
+        "- LANGUAGE: write the professional_summary, every bullet text and "
+        "every section subtitle in the SAME language as the job posting "
+        "(Czech or English). Skill / technology names stay in their canonical "
+        "form (e.g. 'Playwright', 'CI/CD').\n\n"
         "JOB:\n" + _dump(job) + "\n\n"
         "CANDIDATE:\n" + _dump(candidate) + "\n\n"
         "USER ANSWERS:\n" + _dump(answers) + "\n\n"
@@ -289,8 +303,9 @@ def cover_letter_user_prompt(
     return (
         "Write a CoverLetter that is concrete, specific to the company and "
         "role, 3-4 paragraphs maximum. Reference at most TWO real "
-        "achievements / projects from the candidate. Match the language of the "
-        "job posting (English if the JD is English).\n\n"
+        "achievements / projects from the candidate. Write the salutation, "
+        "every paragraph and the closing in the SAME language as the job "
+        "posting (Czech or English).\n\n"
         "JOB:\n" + _dump(job) + "\n\n"
         "CANDIDATE:\n" + _dump(candidate) + "\n\n"
         "USER ANSWERS:\n" + _dump(answers)
@@ -305,7 +320,9 @@ def interview_questions_user_prompt(
         "applying to this role. For each: explain why_asked (what the "
         "interviewer is probing) and a suggested_answer grounded in the "
         "candidate's profile. Keep a balance between technical, behavioural, "
-        "process and culture categories.\n\n"
+        "process and culture categories. Write the question, why_asked and "
+        "suggested_answer in the SAME language as the job posting (Czech or "
+        "English). The category enum stays in English ('technical' etc.).\n\n"
         "JOB:\n" + _dump(job) + "\n\n"
         "CANDIDATE:\n" + _dump(candidate)
     )
@@ -317,7 +334,9 @@ def skill_gap_user_prompt(match_report: MatchReport, job: JobPosting) -> str:
         "weak), output a SkillGap with importance ('critical' / 'important' / "
         "'nice_to_have'), a short rationale, a learning_path of 3-5 concrete "
         "steps, and a suggested_project the candidate could build to fill the "
-        "gap. Skip skills that are already strong.\n\n"
+        "gap. Skip skills that are already strong. Write rationale, "
+        "learning_path entries and suggested_project in the SAME language as "
+        "the job posting (Czech or English). Importance stays in English.\n\n"
         "MATCH REPORT:\n" + _dump(match_report) + "\n\n"
         "JOB:\n" + _dump(job)
     )

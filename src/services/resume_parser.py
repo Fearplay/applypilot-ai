@@ -15,7 +15,7 @@ class ResumeParseError(RuntimeError):
 
 
 def parse_resume_file(path: str | Path) -> str:
-    """Return the candidate's CV text from a PDF / DOCX / TXT file."""
+    """Return the candidate's CV text from a PDF / DOCX / TXT / HTML file."""
     p = Path(path)
     if not p.exists():
         raise ResumeParseError(f"Resume file not found: {p}")
@@ -27,10 +27,12 @@ def parse_resume_file(path: str | Path) -> str:
         return _parse_pdf(p)
     if kind == "docx":
         return _parse_docx(p)
+    if kind == "html":
+        return _parse_html(p)
     if kind in {"txt", "md"}:
         return normalize_whitespace(safe_read_text(p))
     raise ResumeParseError(
-        f"Unsupported resume file type: {p.suffix!r}. Use PDF, DOCX or TXT."
+        f"Unsupported resume file type: {p.suffix!r}. Use PDF, DOCX, TXT or HTML."
     )
 
 
@@ -77,6 +79,36 @@ def _parse_docx(path: Path) -> str:
     if not text.strip():
         raise ResumeParseError("DOCX contained no extractable text.")
     return text
+
+
+def _parse_html(path: Path) -> str:
+    """Return the visible text of an HTML CV.
+
+    Uses BeautifulSoup with the lxml parser; both are already in the project
+    requirements. Drops <head>, <style>, <script> and <noscript> nodes before
+    extraction so that CSS / JS does not bleed into the candidate text.
+    """
+    try:
+        from bs4 import BeautifulSoup  # type: ignore[import-not-found]
+    except ImportError as exc:  # pragma: no cover
+        raise ResumeParseError("beautifulsoup4 is not installed.") from exc
+
+    raw = safe_read_text(path)
+    try:
+        soup = BeautifulSoup(raw, "lxml")
+    except Exception:
+        # lxml may not be available in some minimal envs; fall back to the
+        # built-in html.parser.
+        soup = BeautifulSoup(raw, "html.parser")
+
+    for node in soup(["head", "style", "script", "noscript"]):
+        node.decompose()
+
+    text = soup.get_text(separator="\n", strip=True)
+    cleaned = normalize_whitespace(text)
+    if not cleaned.strip():
+        raise ResumeParseError("HTML contained no extractable text.")
+    return cleaned
 
 
 __all__ = ["parse_resume_file", "ResumeParseError"]
