@@ -1,0 +1,305 @@
+"""HTTP provider that talks to any OpenAI-compatible chat/completions endpoint.
+
+This single class works against:
+* OpenAI (https://api.openai.com/v1)
+* Groq (https://api.groq.com/openai/v1)
+* Mistral (https://api.mistral.ai/v1)
+* OpenRouter (https://openrouter.ai/api/v1)
+* DeepSeek (https://api.deepseek.com/v1)
+* Together AI (https://api.together.xyz/v1)
+* Anthropic via the official OpenAI-compatible endpoint
+* Google Gemini OpenAI-compatible mode
+* Local Ollama (http://localhost:11434/v1)
+* Local LM Studio (http://localhost:1234/v1)
+
+It is implemented with the ``requests`` library only - we do not depend on any
+vendor SDK. The user switches providers by changing ``AI_BASE_URL``,
+``AI_API_KEY`` and ``AI_MODEL`` in ``.env``.
+"""
+from __future__ import annotations
+
+import json
+import logging
+from collections.abc import Sequence
+from typing import Any, TypeVar
+
+import requests
+from pydantic import BaseModel, Field, ValidationError
+
+from ..config import Settings
+from ..models.candidate import CandidateProfile, GitHubProject
+from ..models.documents import (
+    CoverLetter,
+    InterviewQuestion,
+    SkillGap,
+    TailoredResume,
+)
+from ..models.evidence import EvidenceItem
+from ..models.job import JobPosting
+from ..models.match import AnswersBundle, ClarifyingQuestion, MatchReport
+from ..utils.logging_config import get_ai_request_logger
+from . import prompts
+from .base import BaseAIProvider
+
+logger = logging.getLogger(__name__)
+
+T = TypeVar("T", bound=BaseModel)
+
+
+class _QuestionsWrapper(BaseModel):
+    items: list[ClarifyingQuestion] = Field(default_factory=list)
+
+
+class _InterviewWrapper(BaseModel):
+    items: list[InterviewQuestion] = Field(default_factory=list)
+
+
+class _GapsWrapper(BaseModel):
+    items: list[SkillGap] = Field(default_factory=list)
+
+
+class OpenAIProviderError(RuntimeError):
+    """Raised when the upstream HTTP provider fails fatally."""
+
+
+class OpenAICompatibleProvider(BaseAIProvider):
+    """Provider that calls any OpenAI-compatible chat/completions endpoint."""
+
+    name = "openai_compatible"
+    is_demo = False
+
+    def __init__(self, settings: Settings) -> None:
+        if not settings.ai_api_key:
+            raise OpenAIProviderError(
+                "AI_API_KEY is empty - cannot use a real AI provider."
+            )
+        self._settings = settings
+        self._endpoint = f"{settings.ai_base_url.rstrip('/')}/chat/completions"
+        self._headers = {
+            "Authorization": f"Bearer {settings.ai_api_key}",
+            "Content-Type": "application/json",
+        }
+        self._timeout = settings.ai_timeout
+        self._temperature = settings.ai_temperature
+        self._model = settings.ai_model
+        self._supports_json_schema: bool | None = None
+        self.reason = (
+            f"OpenAI-compatible: base_url={settings.ai_base_url}, model={self._model}"
+        )
+        self._audit_log = (
+            get_ai_request_logger() if settings.ai_request_log else None
+        )
+
+    # ------------------------------------------------------------------ http
+    def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._audit_log is not None:
+            self._audit_log.info(
+                "POST %s model=%s messages=%d",
+                self._endpoint,
+                payload.get("model"),
+                len(payload.get("messages", [])),
+            )
+        try:
+            resp = requests.post(
+                self._endpoint,
+                headers=self._headers,
+                data=json.dumps(payload),
+                timeout=self._timeout,
+            )
+        except requests.RequestException as exc:
+            raise OpenAIProviderError(f"HTTP error talking to AI: {exc}") from exc
+
+        if resp.status_code >= 400:
+            raise OpenAIProviderError(
+                f"AI provider returned HTTP {resp.status_code}: {resp.text[:300]}"
+            )
+        try:
+            return resp.json()
+        except ValueError as exc:
+            raise OpenAIProviderError(
+                f"AI provider returned non-JSON body: {resp.text[:200]}"
+            ) from exc
+
+    def _completion_text(self, response: dict[str, Any]) -> str:
+        choices = response.get("choices") or []
+        if not choices:
+            raise OpenAIProviderError("AI provider response had no choices.")
+        message = choices[0].get("message") or {}
+        content = message.get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise OpenAIProviderError("AI provider returned empty content.")
+        return content
+
+    def _structured_call(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        schema_model: type[T],
+    ) -> T:
+        """Call the provider asking for JSON validating ``schema_model``."""
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        schema = schema_model.model_json_schema()
+
+        # First try strict json_schema (OpenAI, OpenRouter, vLLM, ...).
+        if self._supports_json_schema is not False:
+            payload = {
+                "model": self._model,
+                "messages": messages,
+                "temperature": self._temperature,
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": schema_model.__name__,
+                        "schema": schema,
+                        "strict": False,
+                    },
+                },
+            }
+            try:
+                response = self._post(payload)
+                self._supports_json_schema = True
+                content = self._completion_text(response)
+                return self._parse_into(content, schema_model)
+            except OpenAIProviderError as exc:
+                # Try json_object fallback once.
+                logger.warning("json_schema failed, falling back to json_object: %s", exc)
+                self._supports_json_schema = False
+
+        # json_object fallback - inject the schema into the user prompt.
+        payload = {
+            "model": self._model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": (
+                        user_prompt
+                        + "\n\nReturn STRICT JSON matching this schema (no markdown, no commentary):\n"
+                        + json.dumps(schema, ensure_ascii=False, indent=2)
+                    ),
+                },
+            ],
+            "temperature": self._temperature,
+            "response_format": {"type": "json_object"},
+        }
+        try:
+            response = self._post(payload)
+            content = self._completion_text(response)
+            return self._parse_into(content, schema_model)
+        except OpenAIProviderError:
+            # Last-resort: no response_format at all.
+            payload.pop("response_format", None)
+            response = self._post(payload)
+            content = self._completion_text(response)
+            return self._parse_into(content, schema_model)
+
+    @staticmethod
+    def _parse_into(content: str, schema_model: type[T]) -> T:
+        text = content.strip()
+        # Strip accidental markdown fences.
+        if text.startswith("```"):
+            text = text.strip("`")
+            if text.lower().startswith("json"):
+                text = text[4:]
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise OpenAIProviderError(
+                f"AI returned invalid JSON: {exc}\nRaw: {text[:300]}"
+            ) from exc
+        try:
+            return schema_model.model_validate(data)
+        except ValidationError as exc:
+            raise OpenAIProviderError(
+                f"AI JSON failed schema validation: {exc}\nRaw: {text[:300]}"
+            ) from exc
+
+    # ------------------------------------------------------------------ API
+    def analyze_job(
+        self, raw_text: str, source_url: str | None = None
+    ) -> JobPosting:
+        # Use a generic IT recruiter persona for the initial analysis - the
+        # role isn't known yet.
+        system = prompts.system_prompt_for("other_it")
+        user = prompts.analyze_job_user_prompt(raw_text, source_url)
+        result = self._structured_call(system, user, JobPosting)
+        if not result.raw_text:
+            object.__setattr__(result, "raw_text", raw_text)
+        if not result.source_url:
+            object.__setattr__(result, "source_url", source_url)
+        return result
+
+    def analyze_candidate(
+        self,
+        cv_text: str = "",
+        linkedin_text: str = "",
+        github_username: str | None = None,
+        github_projects: Sequence[GitHubProject] = (),
+    ) -> CandidateProfile:
+        system = prompts.system_prompt_for("other_it")
+        user = prompts.analyze_candidate_user_prompt(
+            cv_text, linkedin_text, github_username, list(github_projects)
+        )
+        return self._structured_call(system, user, CandidateProfile)
+
+    def generate_clarifying_questions(
+        self, job: JobPosting, candidate: CandidateProfile
+    ) -> list[ClarifyingQuestion]:
+        system = prompts.system_prompt_for(job.role_type)
+        user = prompts.clarifying_questions_user_prompt(job, candidate)
+        wrapped = self._structured_call(system, user, _QuestionsWrapper)
+        return list(wrapped.items)
+
+    def generate_match_report(
+        self,
+        job: JobPosting,
+        candidate: CandidateProfile,
+        answers: AnswersBundle,
+        evidence: Sequence[EvidenceItem] = (),
+    ) -> MatchReport:
+        system = prompts.system_prompt_for(job.role_type)
+        user = prompts.match_report_user_prompt(job, candidate, answers, list(evidence))
+        return self._structured_call(system, user, MatchReport)
+
+    def generate_resume(
+        self,
+        job: JobPosting,
+        candidate: CandidateProfile,
+        answers: AnswersBundle,
+        evidence: Sequence[EvidenceItem] = (),
+    ) -> TailoredResume:
+        system = prompts.system_prompt_for(job.role_type)
+        user = prompts.resume_user_prompt(job, candidate, answers, list(evidence))
+        return self._structured_call(system, user, TailoredResume)
+
+    def generate_cover_letter(
+        self,
+        job: JobPosting,
+        candidate: CandidateProfile,
+        answers: AnswersBundle,
+    ) -> CoverLetter:
+        system = prompts.system_prompt_for(job.role_type)
+        user = prompts.cover_letter_user_prompt(job, candidate, answers)
+        return self._structured_call(system, user, CoverLetter)
+
+    def generate_interview_questions(
+        self, job: JobPosting, candidate: CandidateProfile
+    ) -> list[InterviewQuestion]:
+        system = prompts.system_prompt_for(job.role_type)
+        user = prompts.interview_questions_user_prompt(job, candidate)
+        wrapped = self._structured_call(system, user, _InterviewWrapper)
+        return list(wrapped.items)
+
+    def generate_skill_gap_plan(
+        self, match_report: MatchReport, job: JobPosting
+    ) -> list[SkillGap]:
+        system = prompts.system_prompt_for(job.role_type)
+        user = prompts.skill_gap_user_prompt(match_report, job)
+        wrapped = self._structured_call(system, user, _GapsWrapper)
+        return list(wrapped.items)
+
+
+__all__ = ["OpenAICompatibleProvider", "OpenAIProviderError"]
