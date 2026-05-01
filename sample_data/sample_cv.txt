@@ -1,0 +1,50 @@
+Jane Doe
+QA Engineer
+jane.doe.demo@example.com  |  +420 777 000 111  |  Prague, CZ
+LinkedIn: https://www.linkedin.com/in/jane-doe-demo
+GitHub:   https://github.com/octocat
+
+Professional Summary
+====================
+Detail-oriented QA engineer with 2+ years of experience designing and
+executing manual and exploratory tests for web applications. Comfortable
+writing clear bug reports, analysing requirements with product owners, and
+gradually introducing test automation in Python.
+
+Technical Skills
+================
+Languages:        Python (intermediate), SQL (basic), JavaScript (basic)
+Test tooling:     pytest, Postman, Selenium IDE, Chrome DevTools
+Bug tracking:     Jira, Confluence
+Methodologies:    Agile / Scrum, exploratory testing, regression suites
+Other:            Git, GitHub, basic CI with GitHub Actions, Linux CLI
+
+Experience
+==========
+
+QA Engineer - DemoLabs s.r.o., Prague                       2023 - Present
+- Designed and executed regression and exploratory test suites for the
+  company's customer portal, reducing user-facing defects by ~25%.
+- Wrote reproducible bug reports in Jira (steps, expected vs actual,
+  attachments), pairing with developers on triage when necessary.
+- Performed manual API checks with Postman against the public REST API.
+- Started introducing pytest-based smoke tests for critical endpoints.
+
+QA Tester (intern) - DemoLabs s.r.o.                        2022 - 2023
+- Helped maintain test cases in Confluence and ran sanity passes before
+  each sprint demo.
+- Reproduced production incidents reported by support and added missing
+  cases to the regression suite.
+
+Education
+=========
+Bachelor of Science in Computer Science
+Demo University of Technology, Prague                       2019 - 2022
+
+Certifications
+==============
+ISTQB Foundation Level (CTFL) - 2023
+
+Languages
+=========
+Czech (native), English (B2/C1), German (A2)

@@ -1,0 +1,46 @@
+Jane Doe
+QA Engineer at DemoLabs - learning automation
+Prague, Czechia
+jane.doe.demo@example.com
+https://www.linkedin.com/in/jane-doe-demo
+
+About
+-----
+Detail-oriented QA engineer who likes turning vague requirements into
+reproducible test cases. Currently expanding into test automation with
+Python (pytest, Selenium, Playwright) and learning more about API testing
+beyond Postman. Comfortable working in agile teams, pairing with
+developers and writing the kind of bug reports that get fixed quickly.
+
+Experience
+----------
+QA Engineer
+DemoLabs s.r.o.  |  Apr 2023 - Present  |  Prague, Czechia
+- Designed regression and exploratory test passes for the customer portal.
+- Reduced user-facing defects by ~25% over four releases.
+- Wrote reproducible bug reports in Jira, paired with devs on triage.
+- Manual API checks in Postman; bootstrapped a small pytest smoke suite.
+
+QA Tester (Intern)
+DemoLabs s.r.o.  |  Jul 2022 - Mar 2023  |  Prague, Czechia
+- Maintained test cases in Confluence and ran pre-demo sanity passes.
+- Reproduced incidents from support tickets, expanded the regression set.
+
+Education
+---------
+Demo University of Technology, Prague
+Bachelor of Science, Computer Science  |  2019 - 2022
+
+Skills
+------
+Manual Testing - Exploratory Testing - Regression Testing - Test Cases
+Bug Reporting - Jira - Confluence - Postman - Python - pytest - SQL (basic)
+Selenium IDE - Git - Agile - Scrum - Communication
+
+Licenses & certifications
+-------------------------
+ISTQB Foundation Level (CTFL) - 2023
+
+Languages
+---------
+Czech (Native), English (Professional), German (Elementary)
