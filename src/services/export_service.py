@@ -507,6 +507,48 @@ _LOCATION_TRANSLATIONS_CS_MULTI: dict[str, str] = {
     "hungary": "Maďarsko",
 }
 
+# Reverse direction (CS -> EN). Keys are diacritics-stripped lowercase so
+# matching is robust whether the AI emits "Praha" or "praha". Multi-word
+# phrases live in `_LOCATION_TRANSLATIONS_EN_MULTI` so e.g. "Praha
+# metropolitní oblast" doesn't get tokenised before we match it.
+_LOCATION_TRANSLATIONS_EN: dict[str, str] = {
+    "praha": "Prague",
+    "brno": "Brno",
+    "ostrava": "Ostrava",
+    "plzen": "Pilsen",
+    "bratislava": "Bratislava",
+    "viden": "Vienna",
+    "berlin": "Berlin",
+    "varsava": "Warsaw",
+    "budapest": "Budapest",
+    "vzdalene": "Remote",
+    "hybridne": "Hybrid",
+    "pracoviste": "On-site",
+    "metropolitni": "Metropolitan",
+    "oblast": "Area",
+    "okoli": "Area",
+}
+
+_LOCATION_TRANSLATIONS_EN_MULTI: dict[str, str] = {
+    # Place full canonical city/area names first so they win against the
+    # token-by-token fallback. Diacritics are stripped on lookup, so the
+    # value side is the only place we need the proper English casing.
+    "praha a okoli": "Prague Metropolitan Area",
+    "praha metropolitni oblast": "Prague Metropolitan Area",
+    "metropolitni oblast prahy": "Prague Metropolitan Area",
+    "hlavni mesto praha": "Prague",
+    "ceska republika": "Czech Republic",
+    "ceskoslovensko": "Czechoslovakia",
+    "slovenska republika": "Slovak Republic",
+    "slovensko": "Slovakia",
+    "spojene kralovstvi": "United Kingdom",
+    "spojene staty": "United States",
+    "nemecko": "Germany",
+    "rakousko": "Austria",
+    "polsko": "Poland",
+    "madarsko": "Hungary",
+}
+
 _CZECH_DIACRITICS = set("ěščřžýáíéúůťďňĚŠČŘŽÝÁÍÉÚŮŤĎŇ")
 
 
@@ -584,25 +626,59 @@ def _localise_spoken_language(name: str, lang: str) -> str:
     return overrides.get(name, name)
 
 
+def _strip_diacritics_for_match(text: str) -> str:
+    """Return ``text`` with diacritics removed, used for table lookups."""
+    import unicodedata
+    decomposed = unicodedata.normalize("NFKD", text or "")
+    return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+
+
 def _localise_location(location: str, lang: str) -> str:
-    """Translate common English place names to ``lang`` while preserving
-    structure. Tokenises on commas first, then normalises each chunk against
-    the multi-word and single-word translation maps.
+    """Translate common place names to ``lang`` while preserving structure.
+
+    Bidirectional: ``lang='cs'`` maps English -> Czech, ``lang='en'`` maps
+    Czech -> English. Tokenises on commas first so a multi-part location
+    like ``"Praha, Česká republika"`` becomes ``"Prague, Czech Republic"``;
+    falls back to a token-level lookup for chunks that aren't recognised
+    as a whole. Unknown chunks pass through verbatim - we never silently
+    drop or fabricate place names.
     """
-    if not location or lang != "cs":
+    if not location or lang not in ("cs", "en"):
         return location
     parts = [p.strip() for p in location.split(",")]
     out: list[str] = []
+    if lang == "cs":
+        for part in parts:
+            if not part:
+                continue
+            lowered = part.lower()
+            translated = _LOCATION_TRANSLATIONS_CS_MULTI.get(lowered)
+            if translated is not None:
+                out.append(translated)
+                continue
+            tokens = part.split()
+            rebuilt = [
+                _LOCATION_TRANSLATIONS_CS.get(tok.lower(), tok) for tok in tokens
+            ]
+            out.append(" ".join(rebuilt))
+        return ", ".join(out)
+    # lang == "en": Czech -> English. Compare on the diacritics-stripped
+    # lowercase form so the maps don't have to enumerate every accented
+    # spelling ("Plzeň" vs "Plzen"). The original casing is used as the
+    # fallback for unknown tokens so unusual place names look untouched.
     for part in parts:
         if not part:
             continue
-        lowered = part.lower()
-        translated = _LOCATION_TRANSLATIONS_CS_MULTI.get(lowered)
+        norm = _strip_diacritics_for_match(part).lower().strip()
+        translated = _LOCATION_TRANSLATIONS_EN_MULTI.get(norm)
         if translated is not None:
             out.append(translated)
             continue
         tokens = part.split()
-        rebuilt = [_LOCATION_TRANSLATIONS_CS.get(tok.lower(), tok) for tok in tokens]
+        rebuilt: list[str] = []
+        for tok in tokens:
+            tok_norm = _strip_diacritics_for_match(tok).lower()
+            rebuilt.append(_LOCATION_TRANSLATIONS_EN.get(tok_norm, tok))
         out.append(" ".join(rebuilt))
     return ", ".join(out)
 

@@ -425,3 +425,63 @@ def test_resume_to_markdown_localises_section_headers_for_czech():
     assert "## Technical Skills" in md_en
     assert "## Experience" in md_en
     assert "## Certifications" in md_en
+
+
+# ---------------------------------------------------------------------------
+# Bidirectional location translation
+# ---------------------------------------------------------------------------
+
+def test_localise_location_cs_to_en_handles_metropolitan_area():
+    """The most-reported translation gap: 'Praha metropolitní oblast'
+    leaking into an English resume must collapse to the canonical
+    'Prague Metropolitan Area' phrase users expect."""
+    from src.services.export_service import _localise_location
+
+    out = _localise_location("Praha metropolitní oblast", "en")
+    assert out == "Prague Metropolitan Area"
+
+
+def test_localise_location_cs_to_en_translates_known_city_and_country():
+    from src.services.export_service import _localise_location
+
+    out = _localise_location("Plzeň, Česká republika", "en")
+    # Comma-separated parts are translated independently and rejoined.
+    assert "Pilsen" in out
+    assert "Czech Republic" in out
+
+
+def test_localise_location_en_to_cs_still_works():
+    """Pre-existing EN -> CS direction must keep working unchanged."""
+    from src.services.export_service import _localise_location
+
+    out = _localise_location("Prague, Czech Republic", "cs")
+    assert "Praha" in out
+    assert "Česká republika" in out
+
+
+def test_localise_location_passes_unknown_chunks_through_verbatim():
+    """We never silently drop or fabricate place names - unknown tokens
+    survive the round trip untouched."""
+    from src.services.export_service import _localise_location
+
+    assert _localise_location("Nowhere, Atlantis", "cs") == "Nowhere, Atlantis"
+    assert _localise_location("Nowhere, Atlantis", "en") == "Nowhere, Atlantis"
+
+
+def test_localise_location_styled_html_no_longer_leaks_metropolitan_area():
+    """Integration check: a Czech location attached to an English resume
+    must not appear in the rendered HTML in its Czech form."""
+    resume = TailoredResume(
+        name="John Doe",
+        professional_summary="QA engineer.",
+        technical_skills=["Python"],
+        role_targeted_for="QA",
+    )
+    candidate = CandidateProfile(
+        full_name="John Doe",
+        location="Praha metropolitní oblast, Česká republika",
+    )
+    html = tailored_resume_to_styled_html(resume, candidate, output_language="en")
+    assert "Prague Metropolitan Area" in html
+    assert "Czech Republic" in html
+    assert "Praha metropolitní oblast" not in html
