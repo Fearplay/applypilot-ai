@@ -271,6 +271,49 @@ def _translate_text_diacritics_insensitive(
     return "".join(out)
 
 
+_MONTH_NUMERIC_GLUE_RE = re.compile(r"\b(\d{1,2})\s+(\d{4})\b")
+
+
+def _replace_diacritics_insensitive(
+    text: str, table: dict[str, str]
+) -> str:
+    """Replace each table key (matched against diacritics-stripped form
+    of ``text``) with its value, longest key first.
+
+    Used by :func:`_translate_period` for both month names and
+    'present' markers because real-world inputs can carry full Czech
+    diacritics (``"současnost"``) AND ASCII-stripped LinkedIn exports
+    (``"soucasnost"``) that the AI sometimes echoes verbatim.
+    """
+    if not text:
+        return text
+    ascii_lower = _strip_diacritics(text).lower()
+    consumed = [False] * len(ascii_lower)
+    spans: list[tuple[int, int, str]] = []
+    for src in sorted(table, key=len, reverse=True):
+        if not src:
+            continue
+        pattern = re.compile(rf"\b{re.escape(src)}\b")
+        for m in pattern.finditer(ascii_lower):
+            start, end = m.start(), m.end()
+            if any(consumed[start:end]):
+                continue
+            spans.append((start, end, table[src]))
+            for i in range(start, end):
+                consumed[i] = True
+    if not spans:
+        return text
+    spans.sort()
+    out: list[str] = []
+    cursor = 0
+    for start, end, replacement in spans:
+        out.append(text[cursor:start])
+        out.append(replacement)
+        cursor = end
+    out.append(text[cursor:])
+    return "".join(out)
+
+
 def _translate_period(period: str, output_language: str) -> str:
     """Convert Czech month names to two-digit numbers and 'současnost' to
     'present' (or vice versa) in a free-text date range.
@@ -279,36 +322,26 @@ def _translate_period(period: str, output_language: str) -> str:
     table for the target language we return the input unchanged. This
     keeps already-correct periods like ``"04/2022 - 06/2023"`` intact and
     only normalises the mixed-language ones the AI sometimes emits.
+
+    After replacing month words with two-digit numbers we also collapse
+    the resulting ``"MM yyyy"`` pattern into ``"MM/yyyy"`` so the styled
+    HTML / DOCX rendering matches the canonical period format the rest
+    of the resume already uses.
     """
     if not period:
         return period
     code = (output_language or "en").strip().lower()
     if code == "en":
-        # Czech months -> 01..12 (case + diacritics insensitive on lookup).
-        out = period
-        ascii_lower = _strip_diacritics(out).lower()
-        # Months: replace by scanning for each token (longest first).
-        for src in sorted(_MONTH_NUMBERS_FROM_CS, key=len, reverse=True):
-            pattern = re.compile(rf"\b{re.escape(src)}\b", re.IGNORECASE)
-            for m in list(pattern.finditer(ascii_lower)):
-                out = out[:m.start()] + _MONTH_NUMBERS_FROM_CS[src] + out[m.end():]
-                ascii_lower = (
-                    ascii_lower[:m.start()]
-                    + _MONTH_NUMBERS_FROM_CS[src]
-                    + ascii_lower[m.end():]
-                )
-        for src in _PRESENT_MARKERS_CS:
-            pattern = re.compile(rf"\b{re.escape(src)}\b", re.IGNORECASE)
-            out = pattern.sub("present", out)
+        present_table = {marker: "present" for marker in _PRESENT_MARKERS_CS}
+        out = _replace_diacritics_insensitive(period, _MONTH_NUMBERS_FROM_CS)
+        out = _replace_diacritics_insensitive(out, present_table)
+        out = _MONTH_NUMERIC_GLUE_RE.sub(r"\1/\2", out)
         return out
     if code == "cs":
-        out = period
-        for src in sorted(_MONTH_NUMBERS_FROM_EN, key=len, reverse=True):
-            pattern = re.compile(rf"\b{re.escape(src)}\b", re.IGNORECASE)
-            out = pattern.sub(_MONTH_NUMBERS_FROM_EN[src], out)
-        for src in _PRESENT_MARKERS_EN:
-            pattern = re.compile(rf"\b{re.escape(src)}\b", re.IGNORECASE)
-            out = pattern.sub("současnost", out)
+        present_table = {marker: "současnost" for marker in _PRESENT_MARKERS_EN}
+        out = _replace_diacritics_insensitive(period, _MONTH_NUMBERS_FROM_EN)
+        out = _replace_diacritics_insensitive(out, present_table)
+        out = _MONTH_NUMERIC_GLUE_RE.sub(r"\1/\2", out)
         return out
     return period
 

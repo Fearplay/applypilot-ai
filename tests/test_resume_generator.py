@@ -30,6 +30,13 @@ from src.models.evidence import EvidenceItem
 from src.models.job import JobPosting
 from src.models.match import AnswersBundle
 from src.services.resume_generator import (
+    _dedup_resume_sections,
+    _fixup_education_language,
+    _looks_czech,
+    _normalize_project_title,
+    _project_title_is_evidenced,
+    _strip_invented_projects,
+    _translate_period,
     ensure_projects_section,
     refine_tailored_resume,
 )
@@ -396,3 +403,227 @@ def test_refine_passes_feedback_and_language_to_provider():
 
     assert provider.received_feedback == "verbatim feedback"
     assert provider.received_lang == "cs"
+
+
+# ---------------------------------------------------------------------------
+# Output-side dedup of duplicate experience / project rows
+# ---------------------------------------------------------------------------
+
+def test_dedup_resume_sections_collapses_duplicate_experience_rows():
+    """When the AI emits both an English and a Czech twin of the same
+    role, the deterministic dedup pass must keep just one row with the
+    union of bullets."""
+    resume = TailoredResume(
+        name="Test",
+        professional_summary="QA.",
+        experience=[
+            ResumeSection(
+                title="Software QA Engineer",
+                subtitle="Gen Digital",
+                period="06/2023 - 07/2025",
+                bullets=[ResumeBullet(text="Backend Python E2E")],
+            ),
+            ResumeSection(
+                title="Software QA Engineer",
+                subtitle="Gen Digital",
+                period="06/2023 - 07/2025",
+                bullets=[ResumeBullet(text="REST API testing")],
+            ),
+        ],
+    )
+    _dedup_resume_sections(resume)
+    assert len(resume.experience) == 1
+    bullet_texts = [b.text for b in resume.experience[0].bullets]
+    assert "Backend Python E2E" in bullet_texts
+    assert "REST API testing" in bullet_texts
+
+
+def test_dedup_resume_sections_keeps_career_progression_distinct():
+    """Junior and Senior at the same company must NEVER be merged - the
+    seniority guard from profile_dedup applies here too."""
+    resume = TailoredResume(
+        name="Test",
+        professional_summary="QA.",
+        experience=[
+            ResumeSection(
+                title="Junior Software QA Engineer",
+                subtitle="Gen Digital",
+                period="04/2022 - 06/2023",
+                bullets=[ResumeBullet(text="Junior bullet.")],
+            ),
+            ResumeSection(
+                title="Senior Software QA Engineer",
+                subtitle="Gen Digital",
+                period="07/2025 - present",
+                bullets=[ResumeBullet(text="Senior bullet.")],
+            ),
+        ],
+    )
+    _dedup_resume_sections(resume)
+    titles = [s.title for s in resume.experience]
+    assert "Junior Software QA Engineer" in titles
+    assert "Senior Software QA Engineer" in titles
+
+
+def test_dedup_resume_sections_dedups_repeated_bullets():
+    """Two identical bullets within the SAME section (one of the AI's
+    favourite mistakes) collapse to one without affecting other rows."""
+    resume = TailoredResume(
+        name="Test",
+        professional_summary="QA.",
+        experience=[
+            ResumeSection(
+                title="QA Engineer",
+                subtitle="Acme",
+                period="2020 - 2022",
+                bullets=[
+                    ResumeBullet(text="Backend Python E2E"),
+                    ResumeBullet(text="Backend Python E2E"),
+                    ResumeBullet(text="REST API testing"),
+                ],
+            ),
+        ],
+    )
+    _dedup_resume_sections(resume)
+    bullets = resume.experience[0].bullets
+    assert len(bullets) == 2
+    texts = [b.text for b in bullets]
+    assert texts.count("Backend Python E2E") == 1
+
+
+def test_dedup_resume_sections_collapses_duplicate_projects():
+    resume = TailoredResume(
+        name="Test",
+        professional_summary="QA.",
+        projects=[
+            ResumeSection(title="ApplyPilot AI", subtitle="Python"),
+            ResumeSection(title="applypilot-ai", subtitle="Python"),
+        ],
+    )
+    _dedup_resume_sections(resume)
+    assert len(resume.projects) == 1
+
+
+# ---------------------------------------------------------------------------
+# Anti-hallucinated projects
+# ---------------------------------------------------------------------------
+
+def test_normalize_project_title_is_diacritics_and_punctuation_insensitive():
+    assert _normalize_project_title("ApplyPilot-AI") == "applypilot ai"
+    assert _normalize_project_title("Žížala_Foo") == _normalize_project_title("zizala foo")
+
+
+def test_project_title_is_evidenced_matches_github_repo_name():
+    candidate = CandidateProfile(
+        full_name="X",
+        projects=[
+            GitHubProject(name="applypilot-ai", url="https://x/a"),
+        ],
+    )
+    assert _project_title_is_evidenced("ApplyPilot AI", candidate)
+    assert _project_title_is_evidenced("applypilot-ai", candidate)
+
+
+def test_project_title_is_evidenced_falls_back_to_raw_text():
+    """When the AI used a CV-style name not present in the repo list, the
+    safety net should still match it via raw_cv_text."""
+    candidate = CandidateProfile(
+        full_name="X",
+        raw_cv_text="Built an internal QA toolkit in Python with Playwright.",
+    )
+    assert _project_title_is_evidenced("internal QA toolkit", candidate)
+
+
+def test_strip_invented_projects_drops_unverified_titles():
+    candidate = CandidateProfile(
+        full_name="X",
+        projects=[GitHubProject(name="real-repo", url="https://x/r")],
+        raw_cv_text="Worked on real-repo.",
+    )
+    resume = TailoredResume(
+        name="X",
+        professional_summary="QA.",
+        projects=[
+            ResumeSection(title="real-repo", subtitle="Python"),
+            ResumeSection(
+                title="AI workflow agents for QA context",
+                subtitle="LLM, Jira, Confluence",
+            ),
+        ],
+    )
+    dropped = _strip_invented_projects(resume, candidate)
+    assert dropped == ["AI workflow agents for QA context"]
+    titles = [s.title for s in resume.projects]
+    assert titles == ["real-repo"]
+
+
+# ---------------------------------------------------------------------------
+# Bidirectional CS<->EN cleanup
+# ---------------------------------------------------------------------------
+
+def test_looks_czech_detects_diacritics_and_keywords():
+    assert _looks_czech("Provozně ekonomická fakulta")
+    assert _looks_czech("praha metropolitni oblast")
+    assert not _looks_czech("Faculty of Economics")
+
+
+def test_translate_period_cs_months_become_numeric_in_english_resume():
+    assert _translate_period("ledna 2021 - července 2023", "en").startswith("01/2021")
+    assert "07/2023" in _translate_period("ledna 2021 - července 2023", "en")
+    assert _translate_period("06/2020 - současnost", "en") == "06/2020 - present"
+
+
+def test_translate_period_round_trips_present_to_czech():
+    assert _translate_period("06/2020 - present", "cs") == "06/2020 - současnost"
+
+
+def test_fixup_education_language_translates_czech_residue_in_english_resume():
+    """A user picked English output but the AI left the Czech faculty
+    name; the cleanup pass must rewrite it to English."""
+    resume = TailoredResume(
+        name="X",
+        professional_summary="QA.",
+        education=[
+            ResumeSection(
+                title="Provozně ekonomická fakulta",
+                subtitle="Česká zemědělská univerzita v Praze",
+                period="ledna 2021 - července 2023",
+            ),
+        ],
+        experience=[
+            ResumeSection(
+                title="Vývojář Python",
+                subtitle="CreatiWeb",
+                period="06/2020 - současnost",
+                bullets=[ResumeBullet(text="Worked on chatbots.")],
+            ),
+        ],
+    )
+    _fixup_education_language(resume, "en")
+    edu = resume.education[0]
+    assert "Faculty of Economics" in edu.title
+    assert "Czech University of Life Sciences" in edu.subtitle
+    assert "Prague" in edu.subtitle
+    assert "01/2021" in edu.period and "07/2023" in edu.period
+    exp = resume.experience[0]
+    assert "Developer" in exp.title
+    assert exp.period == "06/2020 - present"
+
+
+def test_fixup_education_language_still_translates_english_to_czech():
+    resume = TailoredResume(
+        name="X",
+        professional_summary="QA.",
+        education=[
+            ResumeSection(
+                title="Bachelor of Computer Science",
+                subtitle="Faculty of Economics and Management, Prague",
+                period="2018 - 2021",
+            ),
+        ],
+    )
+    _fixup_education_language(resume, "cs")
+    edu = resume.education[0]
+    assert "Bakal" in edu.title
+    assert "Provozně ekonomická" in edu.subtitle
+    assert "Praha" in edu.subtitle
