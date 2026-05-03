@@ -210,23 +210,34 @@ class SectionRemovalConfirmDialog(QDialog):
     """Modal listing rows the AI / discrepancy-flow flagged for removal.
 
     Shown right before document generation so the user gets a final
-    "do you actually want to remove these?" loop. The semantics intentionally
-    match the user's mental model: each row has an *Odstranit* / *Remove this
-    entry* checkbox that defaults to **unchecked**, so anything the user does
-    not actively tick stays in the resume. Inverting the previous "Keep" /
-    default-checked design fixes the ux trap where users left the box checked
-    expecting deletion.
+    "do you actually want to remove these?" loop. Two checkbox defaults:
+
+    * Rows the user already explicitly told us to skip in the discrepancy
+      questions (their ids appear in ``pre_checked_ids``) come in
+      **default-checked** with a small badge - the user said "skip" once
+      and we honour that. Unticking the box brings the row back into the
+      resume.
+    * Rows the AI suggested removing (single-source / off-topic) come in
+      default-unchecked. The user has to actively tick them to delete.
+
+    This split fixes the bug where a row marked 'No - skip it' in the
+    discrepancy step survived because the second dialog defaulted every
+    box to unchecked, and clicking Continue silently re-included the
+    row in the exported resume.
     """
 
     def __init__(
         self,
         candidates: list[_RemovalCandidate],
+        pre_checked_ids: set[str] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(t("dedup.confirm.title"))
         self.setModal(True)
         self.setMinimumWidth(640)
+
+        pre_checked = set(pre_checked_ids or set())
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 18, 20, 18)
@@ -242,6 +253,20 @@ class SectionRemovalConfirmDialog(QDialog):
         body.setWordWrap(True)
         body.setStyleSheet(f"color: {Tokens.text_muted}; font-size: 12px;")
         layout.addWidget(body)
+
+        # Inline hint banner shown only when at least one row is pre-
+        # checked, so the user immediately understands why some boxes
+        # are already ticked. Hidden otherwise to avoid noise.
+        if pre_checked & {c.entry_id for c in candidates}:
+            hint = QLabel(t("dedup.confirm.preselected_hint"))
+            hint.setWordWrap(True)
+            hint.setStyleSheet(
+                f"color: {Tokens.text}; font-size: 12px; "
+                f"background-color: {Tokens.surface_alt}; "
+                f"border: 1px solid {Tokens.border}; "
+                "border-radius: 6px; padding: 8px 10px;"
+            )
+            layout.addWidget(hint)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -278,12 +303,25 @@ class SectionRemovalConfirmDialog(QDialog):
                 row_layout.setContentsMargins(10, 8, 10, 8)
                 row_layout.setSpacing(4)
                 cb = QCheckBox(f"{t('dedup.confirm.remove_action')} - {cand.label}")
-                cb.setChecked(False)
+                # Pre-check rows the user already said 'skip' on so
+                # ticking Continue actually honours their earlier
+                # decision. Anything else stays unchecked = stays in.
+                cb.setChecked(cand.entry_id in pre_checked)
                 cb.setStyleSheet(
                     f"QCheckBox {{ color: {Tokens.text}; font-size: 13px; }}"
                 )
                 self._checkboxes[cand.entry_id] = cb
                 row_layout.addWidget(cb)
+                if cand.entry_id in pre_checked:
+                    badge = QLabel(t("dedup.confirm.preselected_badge"))
+                    badge.setStyleSheet(
+                        f"color: {Tokens.text}; font-size: 11px; "
+                        f"background-color: {Tokens.bg}; "
+                        "border-radius: 4px; padding: 2px 6px; "
+                        "margin-left: 22px; font-weight: 600;"
+                    )
+                    badge.setMaximumWidth(220)
+                    row_layout.addWidget(badge)
                 reason = QLabel(t("dedup.confirm.reason", reason=cand.reason))
                 reason.setWordWrap(True)
                 reason.setStyleSheet(
@@ -604,10 +642,38 @@ class MainWindow(QMainWindow):
     # ----------------------------------------------------------- workflow
     def _on_job_parsed(self, job: JobPosting) -> None:
         self._state.job = job
+        # Honour the 'Re-ask clarifying questions' checkbox: if the user
+        # ticked it before clicking Run analysis, throw away the answers
+        # and skip-decisions from the previous run so the clarifying-
+        # questions dialog and the removal-confirmation dialog reappear.
+        # Without this reset the second analysis silently reuses prior
+        # answers and the user gets a "ghost" pipeline that never asks
+        # anything despite Run analysis being a fresh user intent.
+        if self._setup_page.is_fresh_run_requested():
+            self._reset_workflow_for_fresh_run()
+            self._setup_page.acknowledge_fresh_run()
         self._sidebar.set_status("setup", t("chip.active"), "active")
         self._sidebar.set_activity(
             t("status.parsed_job", title=job.title or t("status.unknown_role"))
         )
+
+    def _reset_workflow_for_fresh_run(self) -> None:
+        """Wipe stateful inputs that survive between analyses.
+
+        Clears clarifying-question answers, the discrepancy exclusion set
+        and any AI-suggested removals so the orchestrator behaves as if
+        this were the very first run. Keeps the parsed job posting and
+        candidate profile because they're recomputed from the setup form
+        on every run anyway.
+        """
+        self._state.answers = AnswersBundle()
+        self._state.pending_questions = []
+        self._state.excluded_entry_ids = set()
+        self._state.ai_removal_reasons = {}
+        # Reset docs_language so the OutputLanguageDialog defaults follow
+        # the current UI language again instead of the previous run's
+        # picked language.
+        self._state.docs_language = get_language()
 
     def _on_profile_built(self, profile: CandidateProfile) -> None:
         self._state.candidate = profile
@@ -938,14 +1004,23 @@ class MainWindow(QMainWindow):
         if not candidates:
             return True
 
-        dlg = SectionRemovalConfirmDialog(candidates, parent=self)
+        # Rows the user already explicitly said 'skip' on (via the
+        # discrepancy clarifying questions) come in pre-checked so the
+        # final dialog honours their earlier decision by default. AI-
+        # suggested removals stay default-unchecked - the user has to
+        # actively confirm those.
+        dlg = SectionRemovalConfirmDialog(
+            candidates,
+            pre_checked_ids=excluded_ids,
+            parent=self,
+        )
         result = dlg.exec()
         if result != QDialog.Accepted:
             return False
-        # Inverted semantics: only the rows the user actively TICKED in the
-        # dialog get removed. Everything else (including previously
-        # discrepancy-excluded rows the user did not re-confirm) stays in
-        # the resume so the safe default is "keep".
+        # Final exclusion set = exactly what the user has ticked in the
+        # dialog. Untouched pre-checked rows stay in (the user accepted the
+        # default), unticked rows the user previously skipped come back
+        # into the resume by their explicit choice here.
         self._state.excluded_entry_ids = dlg.remove_ids()
         return True
 

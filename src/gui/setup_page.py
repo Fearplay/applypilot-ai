@@ -136,6 +136,18 @@ class SetupPage(QWidget):
         self._sample_btn.setProperty("variant", "ghost")
         bar_layout.addWidget(self._sample_btn)
 
+        # Fresh-run toggle: when ticked, the orchestrator wipes any
+        # previously-collected answers / exclusion ids so the clarifying-
+        # questions dialog and the removal-confirmation dialog appear
+        # again on the next analysis. Without this, a re-run with the
+        # same answers above 85% evidence coverage silently skips both.
+        self._fresh_run_chk = QCheckBox(t("setup.fresh_run.label"))
+        self._fresh_run_chk.setToolTip(t("setup.fresh_run.tip"))
+        self._fresh_run_chk.setStyleSheet(
+            f"QCheckBox {{ color: {Tokens.text_muted}; font-size: 11px; }}"
+        )
+        bar_layout.addWidget(self._fresh_run_chk)
+
         self._status_lbl = QLabel("")
         self._status_lbl.setStyleSheet(
             f"color: {Tokens.text_muted}; font-size: 12px;"
@@ -444,6 +456,23 @@ class SetupPage(QWidget):
                 self.set_status(t("setup.job.fallback.copied"))
         elif clicked is cancel_btn:
             self.set_status(t("setup.status.fetch_failed"))
+
+    def is_fresh_run_requested(self) -> bool:
+        """Return True when the user ticked 'Re-ask clarifying questions'.
+
+        The orchestrator polls this just before kicking off a new
+        analysis - if true, it wipes ``state.answers`` /
+        ``state.excluded_entry_ids`` / ``state.ai_removal_reasons`` so the
+        clarifying-questions and removal-confirmation dialogs reappear.
+        After consuming the signal the caller should call
+        :meth:`acknowledge_fresh_run` to untick the checkbox so the next
+        run defaults to the cheaper 'reuse previous answers' path.
+        """
+        return self._fresh_run_chk.isChecked()
+
+    def acknowledge_fresh_run(self) -> None:
+        """Untick the fresh-run checkbox after the orchestrator consumed it."""
+        self._fresh_run_chk.setChecked(False)
 
     def _resolve_github_username(self) -> str:
         if self._gh_skip.isChecked():
