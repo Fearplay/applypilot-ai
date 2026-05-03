@@ -450,11 +450,14 @@ class FakeAIProvider(BaseAIProvider):
         bullets = [ln for ln in lines if ln.startswith(("-", "*", "•"))]
         return [
             WorkExperience(
+                id="exp-0",
                 title=lines[0][:80].title(),
                 company="Previous employer",
                 period="",
                 bullets=[b.lstrip("-*• ").strip() for b in bullets][:5]
                 or [lines[1] if len(lines) > 1 else "Delivered project work."],
+                employment_type="full_time",
+                source="cv",
             )
         ]
 
@@ -463,7 +466,15 @@ class FakeAIProvider(BaseAIProvider):
         m = re.search(r"(?i)(bachelor|master|bsc|msc|university|college)[^\n]*", text)
         if not m:
             return []
-        return [EducationEntry(institution=m.group(0)[:100], degree="", period="")]
+        return [
+            EducationEntry(
+                id="edu-0",
+                institution=m.group(0)[:100],
+                degree="",
+                period="",
+                source="cv",
+            )
+        ]
 
     # --------------------------------------------------------- clarifying Q
     def generate_clarifying_questions(

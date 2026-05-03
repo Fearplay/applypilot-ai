@@ -1,0 +1,48 @@
+---
+description: Always create a new git branch with a descriptive name for each new task
+alwaysApply: true
+---
+
+# Branch per task
+
+Whenever the user gives you a NEW task (bugfix, feature, refactor, doc change, tooling tweak), the FIRST action must be to create a fresh branch off `main`. NEVER commit directly on `main`.
+
+## Procedure
+
+1. Check the current branch with `git status` / `git branch --show-current`.
+2. If you are on `main` with a clean tree:
+   - `git checkout main`
+   - `git pull` (skip if no remote configured)
+   - `git checkout -b <type>/<short-slug>`
+3. If you are on `main` with uncommitted work that belongs to the new task: `git stash`, branch, `git stash pop`.
+4. If you are already on a feature branch and the user's request is a clear continuation of that branch's topic, stay on it. If the request is unrelated, branch off `main` instead.
+
+## Branch naming (Conventional Commits style)
+
+| Prefix | Use for |
+|--------|---------|
+| `fix/<slug>` | bug fixes |
+| `feat/<slug>` | new features / user-facing additions |
+| `chore/<slug>` | tooling, config, CI, dependency bumps |
+| `refactor/<slug>` | non-functional rewrites |
+| `docs/<slug>` | documentation only |
+| `test/<slug>` | test-only changes |
+
+The slug is short, lowercase, hyphenated, and descriptive of the SCOPE - not the implementation.
+
+## Examples
+
+```text
+fix/evidence-json-serialization-and-ai-debug
+feat/profile-dedup-source-aware-resume
+chore/bump-pyside6
+docs/clarify-readme-setup
+refactor/split-question-generator
+```
+
+## When the task is done
+
+1. Commit on the feature branch.
+2. Push with `git push -u origin <branch>` if a remote is configured.
+3. Open a PR back to `main` (use the `gh` CLI if available, otherwise print the prefilled URL for the user).
+4. Never force-push `main` and never delete `main` locally.

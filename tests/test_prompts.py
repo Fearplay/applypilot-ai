@@ -172,3 +172,73 @@ def test_unknown_language_falls_back_to_english():
     body = prompts.skill_gap_user_prompt(report, job, output_language="de")
 
     assert "OUTPUT_LANGUAGE: English." in body
+
+
+# ---------------------------------------------------------------------------
+# Resume prompt: dedup, employment_type, project ranking, no hallucination
+# ---------------------------------------------------------------------------
+def test_resume_prompt_includes_dedup_rule():
+    """The resume prompt must explicitly forbid emitting twin entries."""
+    job = JobPosting(title="QA")
+    candidate = CandidateProfile(full_name="Candidate")
+
+    body = prompts.resume_user_prompt(job, candidate, AnswersBundle(), [])
+
+    assert "DEDUPLICATION" in body
+    assert "same company" in body.lower() or "company and overlapping" in body.lower()
+    assert "never emit twins" in body.lower() or "emit one tailoredresume.experience" in body.lower()
+
+
+def test_resume_prompt_mentions_employment_type_subtitle():
+    job = JobPosting(title="QA")
+    candidate = CandidateProfile(full_name="Candidate")
+
+    body = prompts.resume_user_prompt(job, candidate, AnswersBundle(), [])
+
+    assert "employment_type" in body
+    assert "Internship" in body
+    assert "Stáž" in body  # Czech translation reminder
+
+
+def test_resume_prompt_caps_projects_to_five_and_ranks_by_overlap():
+    job = JobPosting(title="QA")
+    candidate = CandidateProfile(full_name="Candidate")
+
+    body = prompts.resume_user_prompt(job, candidate, AnswersBundle(), [])
+
+    assert "AT MOST 5" in body
+    assert "detected_technologies" in body
+    assert "required_skills" in body
+    assert "ats_keywords" in body
+
+
+def test_resume_prompt_forbids_invented_metrics():
+    job = JobPosting(title="QA")
+    candidate = CandidateProfile(full_name="Candidate")
+
+    body = prompts.resume_user_prompt(job, candidate, AnswersBundle(), [])
+
+    assert "NO HALLUCINATION" in body
+    assert "never invent" in body.lower() or "do not invent" in body.lower()
+
+
+def test_global_rules_forbid_duplicate_facts_across_languages():
+    """The cross-language dedup rule is applied to every prompt via _GLOBAL_RULES."""
+    rules = prompts._GLOBAL_RULES
+    assert "MERGE" in rules
+    assert "Czech" in rules and "English" in rules
+
+
+def test_analyze_candidate_prompt_requires_source_and_employment_type():
+    body = prompts.analyze_candidate_user_prompt(
+        cv_text="John Doe\nQA Engineer at Acme 2020-2022",
+        linkedin_text="John Doe\nQA Engineer Acme 2020 - 2022",
+        github_username=None,
+        github_projects=[],
+    )
+
+    assert "source" in body.lower()
+    assert "employment_type" in body
+    assert "Stáž" in body
+    assert "Internship" in body
+    assert "DEDUPLICATION" in body

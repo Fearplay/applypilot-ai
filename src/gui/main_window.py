@@ -47,6 +47,10 @@ from ..services.gap_plan_generator import generate_skill_gap_plan
 from ..services.history_service import append_history, load_package_files
 from ..services.interview_generator import generate_interview_questions
 from ..services.match_engine import compute_match, needs_clarifying_questions
+from ..services.profile_dedup import (
+    excluded_ids_from_answers,
+    filter_profile_entries,
+)
 from ..services.question_generator import generate_questions
 from ..services.resume_generator import generate_tailored_resume
 from ..utils.preferences import set_preference
@@ -84,6 +88,11 @@ class WorkflowState:
     #: by the user via :class:`OutputLanguageDialog` right before document
     #: generation. Defaults to the UI language until the dialog asks.
     docs_language: str = "en"
+    #: Profile entry ids (experience / education) the user picked 'No - skip
+    #: it' on inside a discrepancy clarifying question. Filtered out of the
+    #: candidate profile right before resume / cover / interview / gap calls
+    #: so excluded rows never reach the AI.
+    excluded_entry_ids: set[str] = field(default_factory=set)
 
 
 # ---------------------------------------------------------------------------
@@ -519,6 +528,12 @@ class MainWindow(QMainWindow):
         dlg = QuestionsDialog(questions, parent=self)
         if dlg.exec() == QDialog.Accepted:
             self._state.answers = dlg.answers()
+            # Translate any 'discrepancy:<id>' answers of "No - skip it" into
+            # the WorkflowState exclusion set so document generation skips
+            # those rows entirely.
+            self._state.excluded_entry_ids = excluded_ids_from_answers(
+                self._state.answers.answers
+            )
             self._start_match_after_answers()
         else:
             self._show_match_report()
@@ -579,19 +594,27 @@ class MainWindow(QMainWindow):
         docs_lang = dlg.selected_language()
         self._state.docs_language = docs_lang
 
+        # Drop experience / education rows the user marked as 'No - skip it'
+        # in the discrepancy questions. The original profile remains on
+        # WorkflowState so re-running the pipeline with a different exclusion
+        # set works without re-fetching anything.
+        candidate_for_docs = filter_profile_entries(
+            candidate, self._state.excluded_entry_ids
+        )
+
         self.statusBar().showMessage(t("status.generating_docs"))
         self._sidebar.set_activity(t("status.generating_docs"))
 
         def work():
             resume = generate_tailored_resume(
-                provider, job, candidate, answers, evidence.items,
+                provider, job, candidate_for_docs, answers, evidence.items,
                 output_language=docs_lang,
             )
             cover = generate_cover_letter(
-                provider, job, candidate, answers, output_language=docs_lang
+                provider, job, candidate_for_docs, answers, output_language=docs_lang
             )
             interview = generate_interview_questions(
-                provider, job, candidate, output_language=docs_lang
+                provider, job, candidate_for_docs, output_language=docs_lang
             )
             gaps = generate_skill_gap_plan(
                 provider, match_report, job, output_language=docs_lang
