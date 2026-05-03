@@ -6,6 +6,7 @@ from collections.abc import Sequence
 
 from ..ai.base import BaseAIProvider
 from ..models.candidate import CandidateProfile, GitHubProject
+from .profile_dedup import dedup_profile
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,13 @@ def build_candidate_profile(
     github_username: str | None = None,
     github_projects: Sequence[GitHubProject] = (),
 ) -> CandidateProfile:
-    """Delegate to the AI provider, with sensible defaults if everything is empty."""
+    """Delegate to the AI provider, then run a Python dedup safety net.
+
+    The dedup pass collapses experience / education rows that the AI emitted
+    twice because the CV and LinkedIn export described the same fact in
+    different languages. It also fills in stable per-entry ids that the
+    GUI uses to track which rows the user skipped via discrepancy questions.
+    """
     if not any(
         [cv_text.strip(), linkedin_text.strip(), github_username, list(github_projects)]
     ):
@@ -29,12 +36,13 @@ def build_candidate_profile(
                 "Add inputs to get a tailored analysis."
             ),
         )
-    return provider.analyze_candidate(
+    profile = provider.analyze_candidate(
         cv_text=cv_text,
         linkedin_text=linkedin_text,
         github_username=github_username,
         github_projects=github_projects,
     )
+    return dedup_profile(profile)
 
 
 __all__ = ["build_candidate_profile"]

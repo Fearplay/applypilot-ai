@@ -1,7 +1,29 @@
 """Models describing the candidate profile (parsed from CV, LinkedIn, GitHub)."""
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
+
+#: Where a profile entry came from. ``both`` means the same fact was found in
+#: CV *and* LinkedIn (after dedup). ``unknown`` is the fall-back for entries
+#: parsed by older sessions / saved analyses that didn't have this field.
+EntrySource = Literal["cv", "linkedin", "both", "unknown"]
+
+#: Employment-type label parsed from the source text (LinkedIn often labels
+#: it explicitly as ``Stáž`` / ``Internship`` / ``Na smlouvu``). Used to
+#: decorate the resume subtitle so we don't paint a 2-month internship as a
+#: full-time role.
+EmploymentType = Literal[
+    "full_time",
+    "part_time",
+    "contract",
+    "internship",
+    "freelance",
+    "self_employed",
+    "temporary",
+    "unknown",
+]
 
 
 class WorkExperience(BaseModel):
@@ -9,21 +31,41 @@ class WorkExperience(BaseModel):
 
     model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
 
+    id: str = Field(
+        default="",
+        description=(
+            "Stable opaque id (e.g. 'exp-3') so clarifying questions can "
+            "reference this row without relying on string equality of fields."
+        ),
+    )
     title: str
     company: str = ""
     period: str = Field(default="", description="Free-text date range, e.g. 'Jan 2023 - Present'.")
     location: str = ""
     bullets: list[str] = Field(default_factory=list)
     technologies: list[str] = Field(default_factory=list)
+    employment_type: EmploymentType = Field(
+        default="unknown",
+        description=(
+            "Parsed from CV/LinkedIn keywords ('Stáž', 'Internship', "
+            "'Na smlouvu', 'Brigáda', etc.). Drives the resume subtitle."
+        ),
+    )
+    source: EntrySource = Field(
+        default="unknown",
+        description="Which input(s) this entry came from.",
+    )
 
 
 class EducationEntry(BaseModel):
     model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
 
+    id: str = Field(default="")
     institution: str
     degree: str = ""
     period: str = ""
     notes: str | None = None
+    source: EntrySource = Field(default="unknown")
 
 
 class CertificationEntry(BaseModel):
@@ -100,4 +142,6 @@ __all__ = [
     "CertificationEntry",
     "GitHubProject",
     "CandidateProfile",
+    "EntrySource",
+    "EmploymentType",
 ]
