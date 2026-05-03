@@ -55,7 +55,7 @@ from ..services.profile_dedup import (
     filter_profile_entries,
 )
 from ..services.question_generator import generate_questions
-from ..services.resume_generator import generate_tailored_resume
+from ..services.resume_generator import generate_tailored_resume, refine_tailored_resume
 from ..utils.preferences import set_preference
 from ..utils.restart import restart_app
 from .documents_page import DocumentsPage
@@ -429,6 +429,7 @@ class MainWindow(QMainWindow):
         self._docs_page = DocumentsPage()
         self._docs_page.back_clicked.connect(lambda: self._goto("match"))
         self._docs_page.save_analysis_clicked.connect(self._on_save_analysis)
+        self._docs_page.refine_requested.connect(self._on_refine_requested)
         self._stack.addWidget(self._docs_page)
 
         self._history_page = HistoryPage(self._settings)
@@ -1033,6 +1034,59 @@ class MainWindow(QMainWindow):
             t("status.reopened", folder=Path(folder_path).name)
         )
         self._goto("documents")
+
+    def _on_refine_requested(self, feedback: str) -> None:
+        """Handle the 'Refine with AI' button from the documents page."""
+        state = self._state
+        if not state.resume or not state.job or not state.candidate:
+            self._docs_page.set_refine_enabled(True)
+            return
+
+        provider = self._provider
+        current_resume = state.resume
+        job = state.job
+        candidate = state.candidate
+        answers = state.answers
+        evidence_items = list(state.evidence.items) if state.evidence else []
+        docs_lang = state.docs_language or get_language()
+
+        self._docs_page.set_status(t("docs.refine.status"))
+        self.statusBar().showMessage(t("docs.refine.status"))
+
+        def work():
+            return refine_tailored_resume(
+                provider, current_resume, feedback,
+                job, candidate, answers, evidence_items,
+                output_language=docs_lang,
+            )
+
+        def on_done(refined):
+            # ``refine_tailored_resume`` returns a ``RefinedResume`` with
+            # the updated resume AND a 1-3 sentence ``explanation`` (in
+            # the docs language) we surface inline so the user knows what
+            # changed without opening the modern preview.
+            updated_resume = refined.resume
+            state.resume = updated_resume
+            if state.package:
+                state.package.tailored_resume = updated_resume
+                self._docs_page.load_package(state.package)
+            self._docs_page.set_refine_enabled(True)
+            inline_message = (
+                refined.explanation.strip() or t("docs.refine.done")
+            )
+            self._docs_page.set_status(inline_message)
+            self.statusBar().clearMessage()
+
+        def on_failed(message):
+            self._docs_page.set_refine_enabled(True)
+            self._docs_page.set_status(t("docs.refine.error", error=message))
+            self.statusBar().clearMessage()
+
+        run_in_background(
+            self._pool, work,
+            on_finished=on_done,
+            on_failed=on_failed,
+        )
 
     def _on_workflow_failed(self, message: str) -> None:
         self.statusBar().clearMessage()

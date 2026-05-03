@@ -50,6 +50,7 @@ except ImportError:  # pragma: no cover - lighter envs
 class DocumentsPage(QWidget):
     save_analysis_clicked = Signal()
     back_clicked = Signal()
+    refine_requested = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -86,8 +87,36 @@ class DocumentsPage(QWidget):
         body_layout.addWidget(self._tabs, stretch=1)
         self._modern_resume_html: str = ""
 
+        refine_frame = QFrame()
+        refine_frame.setStyleSheet(
+            f"QFrame {{ background: {Tokens.bg}; "
+            f"border: 1px solid {Tokens.border}; "
+            "border-radius: 8px; }}"
+        )
+        refine_layout = QHBoxLayout(refine_frame)
+        refine_layout.setContentsMargins(12, 8, 12, 8)
+        refine_layout.setSpacing(8)
+        self._refine_input = QPlainTextEdit()
+        self._refine_input.setPlaceholderText(t("docs.refine.placeholder"))
+        self._refine_input.setMaximumHeight(60)
+        self._refine_input.setStyleSheet(
+            "QPlainTextEdit { border: 1px solid #CBD5E1; "
+            "border-radius: 6px; padding: 4px; font-size: 12px; }"
+        )
+        refine_layout.addWidget(self._refine_input, stretch=1)
+        self._refine_btn = QPushButton(t("docs.refine.button"))
+        self._refine_btn.setProperty("variant", "primary")
+        self._refine_btn.setMinimumWidth(130)
+        self._refine_btn.clicked.connect(self._on_refine_clicked)
+        refine_layout.addWidget(self._refine_btn)
+        body_layout.addWidget(refine_frame)
+
         self._status = QLabel("")
         self._status.setStyleSheet(f"color: {Tokens.text_muted}; font-size: 12px;")
+        # Refine flow now writes a 1-3 sentence inline explanation here
+        # (the AI's note plus any safety-net additions); enable wrap so
+        # multi-sentence messages aren't truncated.
+        self._status.setWordWrap(True)
         body_layout.addWidget(self._status)
 
         bar = QFrame()
@@ -216,6 +245,21 @@ class DocumentsPage(QWidget):
             self._status.setText(t("docs.saved_html_status", path=path))
         except OSError as exc:
             QMessageBox.critical(self, t("docs.error.export_title"), str(exc))
+
+    def _on_refine_clicked(self) -> None:
+        feedback = self._refine_input.toPlainText().strip()
+        if not feedback:
+            return
+        self._refine_btn.setEnabled(False)
+        self._refine_input.setReadOnly(True)
+        self.refine_requested.emit(feedback)
+
+    def set_refine_enabled(self, enabled: bool) -> None:
+        """Re-enable the refine panel after a refinement completes or fails."""
+        self._refine_btn.setEnabled(enabled)
+        self._refine_input.setReadOnly(not enabled)
+        if enabled:
+            self._refine_input.clear()
 
     # ----------------------------------------------------------- public
     def load_package(self, package: GeneratedApplicationPackage) -> None:

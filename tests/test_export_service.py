@@ -204,10 +204,10 @@ def test_styled_html_does_not_double_encode_ampersand_in_section_labels():
     Now that the dictionary holds a plain ``&`` we must see ``&amp;``
     exactly once and never the double-encoded ``&amp;amp;``.
 
-    Skill GROUP labels (``CI/CD & Tooling``) stay in English regardless of
-    the resume language - only structural sidebar headers and language /
-    location names get translated. Double-encoding regression must still
-    not happen on those English labels.
+    Skill GROUP labels are also translated in Czech mode (the user
+    requested all sidebar headers in CS, including skill categories);
+    those translations come from ``_SKILL_GROUP_LOCALISED_LABELS["cs"]``
+    and must not regress the double-encoding fix either.
     """
     resume = TailoredResume(
         name="Jana Nováková",
@@ -221,8 +221,12 @@ def test_styled_html_does_not_double_encode_ampersand_in_section_labels():
     html = tailored_resume_to_styled_html(resume, output_language="cs")
     assert "&amp;amp;" not in html
     assert "Certifikáty &amp; kurzy" in html
-    # Skill group label is rendered in English (option-A localisation policy).
-    assert "CI/CD &amp; Tooling" in html
+    # CS resume now shows the localised group header; the canonical
+    # English "CI/CD & Tooling" must NOT leak into the rendered HTML.
+    assert "CI/CD a nástroje" in html
+    assert "CI/CD &amp; Tooling" not in html
+    # Programovací jazyky / Frameworky are also expected to land in CS.
+    assert "Programovací jazyky" in html or "Frameworky" in html
     # Double-encoded would have looked like "CI/CD &amp;amp; Tooling".
     assert "CI/CD &amp;amp;" not in html
 

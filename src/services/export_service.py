@@ -146,7 +146,10 @@ def resume_to_markdown(resume: TailoredResume, output_language: str = "en") -> s
             return
         parts.append(f"\n## {title}\n")
         for s in items:
-            parts.append(f"### {s.title}")
+            header = f"### {s.title}"
+            if s.period:
+                header += f" ({s.period})"
+            parts.append(header)
             if s.subtitle:
                 parts.append(f"*{s.subtitle}*")
             for b in s.bullets:
@@ -310,7 +313,10 @@ def resume_to_docx(
             return
         doc.add_heading(title, level=1)
         for section in items:
-            doc.add_heading(s(section.title), level=2)
+            heading_text = s(section.title)
+            if section.period:
+                heading_text += f" ({s(section.period)})"
+            doc.add_heading(heading_text, level=2)
             if section.subtitle:
                 p = doc.add_paragraph()
                 p.add_run(s(section.subtitle)).italic = True
@@ -419,13 +425,24 @@ _SKILL_GROUP_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     )),
 )
 
-# Per the user's preference (option A in the localisation plan): skill GROUP
-# labels and skill items themselves stay in their canonical English form
-# regardless of the resume language. Only structural sidebar headers
-# (Tech Stack -> Technologie, Languages -> Jazyky), spoken-language names and
-# the location string get translated in CS mode.
+# Skill GROUP labels (the categories shown above the chip rows). Skill ITEMS
+# (Playwright, C#, Pytest, ...) stay in their canonical English form because
+# ATS bots and recruiters expect the industry vocabulary verbatim. The
+# headers, however, are read by humans and were unintelligible to Czech
+# speakers when left in English (especially "Languages", which collides
+# semantically with "Jazyky" right below it). New locales can extend this
+# table without touching `_localised_group_label`.
 _SKILL_GROUP_LOCALISED_LABELS: dict[str, dict[str, str]] = {
-    "cs": {},
+    "cs": {
+        "Test Automation": "Automatizace testů",
+        "Languages": "Programovací jazyky",
+        "CI/CD & Tooling": "CI/CD a nástroje",
+        "Frameworks": "Frameworky",
+        "AI / Data": "AI / Data",
+        "Databases": "Databáze",
+        "Methodology": "Metodiky",
+        "Other": "Ostatní",
+    },
     "en": {},
 }
 
@@ -547,11 +564,12 @@ def _esc(text: str | None) -> str:
 def _localised_group_label(group: str, lang: str) -> str:
     """Return the display label for a skill group.
 
-    Per the option-A localisation policy, skill GROUP labels stay in English
-    regardless of ``lang`` - this keeps the sidebar visually consistent with
-    industry-standard tech vocabulary (Playwright, Pytest, ...). The map
-    ``_SKILL_GROUP_LOCALISED_LABELS`` is intentionally empty today but kept
-    so future locales can opt-in by populating it.
+    The skill ITEMS (Playwright, C#, Pytest, ...) always stay in their
+    canonical English form because ATS bots and recruiters expect the
+    industry vocabulary verbatim. The GROUP HEADERS are read by humans
+    though, so they get translated when ``lang`` has an entry in
+    :data:`_SKILL_GROUP_LOCALISED_LABELS`. Falls back to the canonical
+    English label when no override exists for ``lang``.
     """
     overrides = _SKILL_GROUP_LOCALISED_LABELS.get(lang, {})
     return overrides.get(group, group)
@@ -772,11 +790,16 @@ def _styled_main(resume: TailoredResume, labels: dict[str, str]) -> str:
         parts.append(f'<h2>{_esc(labels["experience"])}</h2>')
         for s in resume.experience:
             bullets = "".join(f"<li>{_esc(b.text)}</li>" for b in s.bullets)
+            period_html = (
+                f'<div class="job-period">{_esc(s.period)}</div>'
+                if s.period else ""
+            )
             parts.append(
                 '<div class="job">'
                 '<div class="job-header">'
                 f'<div class="job-title">{_esc(s.title)}</div>'
-                "</div>"
+                + period_html
+                + "</div>"
                 + (f'<div class="job-company">{_esc(s.subtitle)}</div>' if s.subtitle else "")
                 + (f"<ul>{bullets}</ul>" if bullets else "")
                 + "</div>"
@@ -796,9 +819,13 @@ def _styled_main(resume: TailoredResume, labels: dict[str, str]) -> str:
     if resume.education:
         parts.append(f'<h2>{_esc(labels["education"])}</h2>')
         for s in resume.education:
+            period_html = (
+                f'<span class="job-period">{_esc(s.period)}</span>'
+                if s.period else ""
+            )
             parts.append(
                 '<div class="edu-row">'
-                f'<div class="top"><span>{_esc(s.title)}</span></div>'
+                f'<div class="top"><span>{_esc(s.title)}</span>{period_html}</div>'
                 + (f'<div class="sub">{_esc(s.subtitle)}</div>' if s.subtitle else "")
                 + "</div>"
             )
