@@ -31,6 +31,7 @@ from ..models.candidate import CandidateProfile, GitHubProject
 from ..models.documents import (
     CoverLetter,
     InterviewQuestion,
+    RefinedResume,
     SkillGap,
     TailoredResume,
 )
@@ -393,6 +394,23 @@ class OpenAICompatibleProvider(BaseAIProvider):
         user = prompts.skill_gap_user_prompt(match_report, job, output_language)
         wrapped = self._run("skill_gap_plan", system, user, _GapsWrapper)
         return list(wrapped.items)
+
+    def refine_resume(
+        self,
+        current_resume: TailoredResume,
+        feedback: str,
+        job: JobPosting,
+        candidate: CandidateProfile,
+        answers: AnswersBundle,
+        evidence: Sequence[EvidenceItem] = (),
+        output_language: str = "en",
+    ) -> RefinedResume:
+        system = prompts.system_prompt_for(job.role_type)
+        user = prompts.refine_resume_user_prompt(
+            current_resume, feedback, job, candidate, answers,
+            list(evidence), output_language,
+        )
+        return self._run("refine_resume", system, user, RefinedResume)
 
 
 __all__ = ["OpenAICompatibleProvider", "OpenAIProviderError"]

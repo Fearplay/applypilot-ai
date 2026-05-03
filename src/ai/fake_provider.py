@@ -23,6 +23,7 @@ from ..models.candidate import (
 from ..models.documents import (
     CoverLetter,
     InterviewQuestion,
+    RefinedResume,
     ResumeBullet,
     ResumeSection,
     SkillGap,
@@ -795,7 +796,8 @@ class FakeAIProvider(BaseAIProvider):
         experience_section = [
             ResumeSection(
                 title=w.title,
-                subtitle=" - ".join(b for b in [w.company, w.period] if b),
+                subtitle=w.company,
+                period=w.period,
                 bullets=[ResumeBullet(text=b, keywords=[]) for b in w.bullets[:4]]
                 or [ResumeBullet(text="Delivered hands-on work in this role.", keywords=[])],
             )
@@ -806,6 +808,7 @@ class FakeAIProvider(BaseAIProvider):
             ResumeSection(
                 title=e.degree or "Degree",
                 subtitle=e.institution,
+                period=e.period,
                 bullets=([ResumeBullet(text=e.notes, keywords=[])] if e.notes else []),
             )
             for e in candidate.education[:3]
@@ -833,6 +836,30 @@ class FakeAIProvider(BaseAIProvider):
             certifications=[c.name for c in candidate.certifications],
             role_targeted_for=job.title,
         )
+
+    # -------------------------------------------------------- refine resume
+    def refine_resume(
+        self,
+        current_resume: TailoredResume,
+        feedback: str,
+        job: JobPosting,
+        candidate: CandidateProfile,
+        answers: AnswersBundle,
+        evidence: Sequence[EvidenceItem] = (),
+        output_language: str = "en",
+    ) -> RefinedResume:
+        note = f"[Demo] User feedback received: {feedback[:200]}"
+        current_resume.professional_summary = (
+            f"{note}\n\n{current_resume.professional_summary}"
+        )
+        explanation = (
+            "[Demo] Žádné skutečné AI volání neproběhlo - "
+            "zpětná vazba byla pouze přilepena do shrnutí."
+            if (output_language or "en").lower() == "cs"
+            else "[Demo] No real AI call was made - your feedback was "
+                 "appended to the summary verbatim."
+        )
+        return RefinedResume(resume=current_resume, explanation=explanation)
 
     # ----------------------------------------------------------- cover ltr
     def generate_cover_letter(

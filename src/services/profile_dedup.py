@@ -178,6 +178,31 @@ def _normalize_name(text: str) -> str:
     return " ".join(tokens)
 
 
+# ---------------------------------------------------------------------------
+# Seniority prefixes used to distinguish career-progression entries.
+# Single source of truth shared with the resume generator (which imports
+# ``_extract_seniority`` from here so the two modules can never drift).
+# ---------------------------------------------------------------------------
+SENIORITY_PREFIXES: tuple[str, ...] = (
+    "junior", "senior", "lead", "staff", "principal", "head",
+)
+_SENIORITY_RE = re.compile(
+    r"^(" + "|".join(SENIORITY_PREFIXES) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def _strip_seniority(title: str) -> str:
+    """Drop a leading 'Junior'/'Senior'/'Lead'/... prefix, if any."""
+    return _SENIORITY_RE.sub("", (title or "").strip()).strip()
+
+
+def _extract_seniority(title: str) -> str:
+    """Return the lowercase seniority prefix on ``title`` or ``""``."""
+    m = _SENIORITY_RE.match((title or "").strip())
+    return m.group(1).lower() if m else ""
+
+
 _YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
 
 
@@ -390,11 +415,25 @@ def _merge_education(a: EducationEntry, b: EducationEntry) -> EducationEntry:
 # ---------------------------------------------------------------------------
 
 def _dedup_experience(entries: list[WorkExperience]) -> list[WorkExperience]:
-    """Greedy O(n^2) dedup - n is small (rarely > 15) so this is fine."""
+    """Greedy O(n^2) dedup - n is small (rarely > 15) so this is fine.
+
+    Seniority guard (HARD RULE): two rows with DIFFERENT seniority prefixes
+    on their titles (e.g. 'Junior Software QA Engineer' vs 'Software QA
+    Engineer' vs 'Senior Software QA Engineer') are NEVER merged, even if
+    the company name matches and the date ranges overlap. Career
+    progression entries always remain separate so the resume keeps its
+    full timeline.
+    """
     survivors: list[WorkExperience] = []
     for entry in entries:
+        entry_sen = _extract_seniority(entry.title)
         merged = False
         for i, existing in enumerate(survivors):
+            existing_sen = _extract_seniority(existing.title)
+            if entry_sen != existing_sen:
+                # Distinct seniority levels are different career-progression
+                # rows even when company + dates would otherwise match.
+                continue
             if _names_match(existing.company, entry.company) and _ranges_overlap(
                 _parse_year_range(existing.period),
                 _parse_year_range(entry.period),
@@ -645,15 +684,87 @@ def _canonicalise_language_name(name: str) -> str:
     return _LANGUAGE_CANONICAL.get(key, name.strip())
 
 
+_CEFR_RE = re.compile(r"^[ABC][12]$", re.IGNORECASE)
+
+_DESCRIPTIVE_TO_CEFR: dict[str, str] = {
+    "native or bilingual": "C2",
+    "native or bilingual proficiency": "C2",
+    "native": "C2",
+    "bilingual": "C2",
+    "mateřský": "C2",
+    "mateřsky": "C2",
+    "rodilý mluvčí": "C2",
+    "full professional": "C1",
+    "full professional proficiency": "C1",
+    "professional working": "B2",
+    "professional working proficiency": "B2",
+    "limited working": "B1",
+    "limited working proficiency": "B1",
+    "elementary": "A2",
+    "elementary proficiency": "A2",
+    "beginner": "A1",
+    "passive": "B2",
+    "pasivní": "B2",
+    "pasivně": "B2",
+}
+
+
+def _extract_cefr(level: str) -> str:
+    """Pull a CEFR code out of a compound string like "C1 - native"."""
+    m = re.search(r"\b([ABC][12])\b", level, re.IGNORECASE)
+    return m.group(1).upper() if m else ""
+
+
+def _to_cefr(level: str) -> str:
+    """Convert a level string to CEFR if possible, otherwise return as-is."""
+    stripped = level.strip()
+    if not stripped:
+        return ""
+    embedded = _extract_cefr(stripped)
+    if embedded:
+        return embedded
+    key = stripped.lower()
+    return _DESCRIPTIVE_TO_CEFR.get(key, stripped)
+
+
+def _is_cefr(level: str) -> bool:
+    return bool(_CEFR_RE.match(level.strip()))
+
+
+_CEFR_RANK = {"A1": 1, "A2": 2, "B1": 3, "B2": 4, "C1": 5, "C2": 6}
+
+
+def _pick_better_level(existing: str, incoming: str) -> str:
+    """Pick the best level between two candidates, preferring CEFR codes.
+
+    When both resolve to CEFR, the higher proficiency wins.
+    """
+    if not existing:
+        return _to_cefr(incoming)
+    if not incoming:
+        return _to_cefr(existing)
+    e_resolved = _to_cefr(existing)
+    i_resolved = _to_cefr(incoming)
+    e_is = _is_cefr(e_resolved)
+    i_is = _is_cefr(i_resolved)
+    if e_is and i_is:
+        return e_resolved if _CEFR_RANK.get(e_resolved, 0) >= _CEFR_RANK.get(i_resolved, 0) else i_resolved
+    if e_is:
+        return e_resolved
+    if i_is:
+        return i_resolved
+    return e_resolved
+
+
 def _dedup_languages(entries: list[str]) -> list[str]:
     """Collapse "Czech" / "čeština" / "Czech (mateřský)" into one entry.
 
-    The canonical English name wins; the level annotation from the
-    richest variant is preserved. Order follows the first time each
-    canonical name appears in the input.
+    The canonical English name wins. For levels, CEFR codes (C2, C1, B2, ...)
+    are always preferred over descriptive labels ("Native or Bilingual",
+    "Full Professional"). Descriptive labels are converted to CEFR.
     """
     canonical_order: list[str] = []
-    by_canonical: dict[str, str] = {}  # canonical -> best level seen
+    by_canonical: dict[str, str] = {}
     for raw in entries:
         name, level = _split_language_entry(raw)
         if not name:
@@ -661,13 +772,11 @@ def _dedup_languages(entries: list[str]) -> list[str]:
         canonical = _canonicalise_language_name(name)
         if canonical not in by_canonical:
             canonical_order.append(canonical)
-            by_canonical[canonical] = level
+            by_canonical[canonical] = _to_cefr(level)
         else:
-            existing_level = by_canonical[canonical]
-            if not existing_level and level:
-                by_canonical[canonical] = level
-            elif level and len(level) > len(existing_level):
-                by_canonical[canonical] = level
+            by_canonical[canonical] = _pick_better_level(
+                by_canonical[canonical], level
+            )
 
     result: list[str] = []
     for canonical in canonical_order:
@@ -677,6 +786,98 @@ def _dedup_languages(entries: list[str]) -> list[str]:
         else:
             result.append(canonical)
     return result
+
+
+# ---------------------------------------------------------------------------
+# CEFR fallback: scan raw CV / LinkedIn text when the AI forgot to attach
+# proficiency labels to the spoken_languages entries
+# ---------------------------------------------------------------------------
+
+# Match "Name (proficiency)" pairs. We allow one or two words for the name
+# (covers cases like "Mandarin Chinese") and any non-paren content for the
+# proficiency. The full Unicode letter range catches diacritics in
+# "angličtina", "čeština", "němčina", "français", ... The intra-word
+# whitespace is restricted to spaces/tabs so we never bridge a newline -
+# otherwise a heading like "Languages\nangličtina (Full Professional)"
+# would be captured as the two-word name "Languages\nangličtina".
+_LANG_PROFICIENCY_RE = re.compile(
+    r"([A-Za-z\u00C0-\u024F]+(?:[ \t]+[A-Za-z\u00C0-\u024F]+)?)[ \t]*\(([^)]+)\)",
+    re.UNICODE,
+)
+
+# Recognised English canonical labels - used to filter out spurious matches
+# like "Pilsen (Czech Republic)" or "Praha (CZ)" which look syntactically
+# like a language proficiency pair.
+_KNOWN_CANONICAL_LANGUAGES: frozenset[str] = frozenset(
+    v.lower() for v in _LANGUAGE_CANONICAL.values()
+)
+
+
+def _extract_language_levels_from_raw_text(text: str) -> dict[str, str]:
+    """Scan ``text`` for ``Name (proficiency)`` pairs and return a map of
+    canonical English language name -> CEFR level.
+
+    Used by :func:`_backfill_language_levels` when the AI dropped the
+    proficiency annotations from ``spoken_languages`` (the AI sometimes
+    emits ``["Czech", "English", "German"]`` instead of ``["Czech (Native
+    or Bilingual)", ...]``). Parses defensively: any pair that doesn't map
+    to a known language label is silently skipped so we don't accidentally
+    treat ``"Prague (Czech Republic)"`` as a language entry.
+    """
+    if not text:
+        return {}
+    out: dict[str, str] = {}
+    for m in _LANG_PROFICIENCY_RE.finditer(text):
+        raw_name = m.group(1).strip()
+        raw_level = m.group(2).strip()
+        if not raw_name or not raw_level:
+            continue
+        canonical = _canonicalise_language_name(raw_name)
+        # Reject if the name was unchanged AND not in the canonical
+        # whitelist - that means it was a non-language token like a
+        # city name or product name.
+        canonical_lower = canonical.lower()
+        if canonical_lower not in _KNOWN_CANONICAL_LANGUAGES:
+            continue
+        cefr = _to_cefr(raw_level)
+        if not _is_cefr(cefr):
+            continue
+        existing = out.get(canonical)
+        if existing:
+            out[canonical] = _pick_better_level(existing, cefr)
+        else:
+            out[canonical] = cefr
+    return out
+
+
+def _backfill_language_levels(
+    languages: list[str], raw_text: str
+) -> list[str]:
+    """For each entry in ``languages`` that lacks a CEFR level, try to
+    fill one in from ``raw_text`` (CV + LinkedIn export concatenated).
+
+    Pure function: returns a new list, never mutates the input. Order is
+    preserved. Entries that already have a level are passed through
+    untouched.
+    """
+    if not languages or not raw_text:
+        return list(languages)
+    levels = _extract_language_levels_from_raw_text(raw_text)
+    if not levels:
+        return list(languages)
+    out: list[str] = []
+    for entry in languages:
+        name, level = _split_language_entry(entry)
+        if level:
+            out.append(entry)
+            continue
+        canonical = _canonicalise_language_name(name)
+        cefr = levels.get(canonical)
+        if cefr:
+            out.append(f"{name} ({cefr})")
+        else:
+            out.append(entry)
+    return out
 
 
 def _ensure_ids(entries: list, prefix: str) -> None:
@@ -707,12 +908,20 @@ def dedup_profile(profile: CandidateProfile) -> CandidateProfile:
     Also collapses duplicate certifications and spoken-language entries
     that come from the same source mentioned twice with different
     spellings (e.g. ``"Czech"`` + ``"čeština"``, or ``"Java Programming"``
-    + ``"Oracle Academy - Java Programming"``).
+    + ``"Oracle Academy - Java Programming"``). Spoken languages without
+    a CEFR level are augmented from ``profile.raw_cv_text`` /
+    ``profile.raw_linkedin_text`` so the rendered sidebar always has the
+    proficiency the user actually provided.
     """
     deduped_exp = _dedup_experience(list(profile.experience))
     deduped_edu = _dedup_education(list(profile.education))
     deduped_certs = _dedup_certifications(list(profile.certifications))
     deduped_langs = _dedup_languages(list(profile.spoken_languages))
+    raw_text = "\n".join(
+        chunk for chunk in (profile.raw_cv_text, profile.raw_linkedin_text)
+        if chunk
+    )
+    deduped_langs = _backfill_language_levels(deduped_langs, raw_text)
     if len(deduped_exp) != len(profile.experience):
         logger.info(
             "profile_dedup: collapsed %d duplicate experience rows",
@@ -1247,4 +1456,6 @@ _TEST_ONLY = (  # noqa: F841 - documentation aid, not used at runtime
     "_split_combined_company",
     "_is_combined_company",
     "_structural_choice_kind",
+    "_extract_language_levels_from_raw_text",
+    "_backfill_language_levels",
 )

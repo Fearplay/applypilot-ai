@@ -8,6 +8,7 @@ from ..models.candidate import CandidateProfile, GitHubProject
 from ..models.documents import (
     CoverLetter,
     InterviewQuestion,
+    RefinedResume,
     SkillGap,
     TailoredResume,
 )
@@ -120,6 +121,26 @@ class BaseAIProvider(ABC):
         output_language: str = "en",
     ) -> list[SkillGap]:
         """Generate a structured skill-gap plan."""
+
+    # -------------------------------------------------------- refine resume
+    @abstractmethod
+    def refine_resume(
+        self,
+        current_resume: TailoredResume,
+        feedback: str,
+        job: JobPosting,
+        candidate: CandidateProfile,
+        answers: AnswersBundle,
+        evidence: Sequence[EvidenceItem] = (),
+        output_language: str = "en",
+    ) -> RefinedResume:
+        """Re-generate the resume incorporating the user's feedback.
+
+        Returns a :class:`RefinedResume` carrying both the updated
+        :class:`TailoredResume` and a 1-3 sentence ``explanation`` (in
+        the target ``output_language``) the GUI shows inline so the user
+        understands what changed and why.
+        """
 
 
 __all__ = ["BaseAIProvider"]

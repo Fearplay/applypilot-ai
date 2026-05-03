@@ -24,7 +24,11 @@ class ResumeSection(BaseModel):
     title: str
     subtitle: str = Field(
         default="",
-        description="Optional second line, e.g. company + period for an experience entry.",
+        description="Optional second line, e.g. company name for an experience entry.",
+    )
+    period: str = Field(
+        default="",
+        description="Date range, e.g. '07/2025 - present' or '2017 - 2021'. Required for experience and education.",
     )
     bullets: list[ResumeBullet] = Field(default_factory=list)
 
@@ -53,6 +57,33 @@ class TailoredResume(BaseModel):
     role_targeted_for: str = Field(
         default="",
         description="Human-readable role this resume was tailored for.",
+    )
+
+
+class RefinedResume(BaseModel):
+    """Output of a refine-with-AI pass: the updated resume PLUS a short
+    natural-language explanation the GUI shows inline.
+
+    Carrying the explanation alongside the resume serves two purposes:
+
+    * It tells the user WHY the AI changed (or originally omitted) what
+      it changed, so the refinement loop feels collaborative instead of
+      opaque.
+    * The deterministic safety net in :mod:`src.services.resume_generator`
+      can append its own one-liner ("Safety net added: ...") so the user
+      always sees both AI- and rule-based modifications in one place.
+    """
+
+    model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
+
+    resume: TailoredResume
+    explanation: str = Field(
+        default="",
+        description=(
+            "1-3 sentence natural-language note (in OUTPUT_LANGUAGE) that "
+            "tells the user what the refinement changed and why it was "
+            "necessary. Shown inline in the GUI under the refine panel."
+        ),
     )
 
 
@@ -92,6 +123,7 @@ __all__ = [
     "ResumeBullet",
     "ResumeSection",
     "TailoredResume",
+    "RefinedResume",
     "CoverLetter",
     "InterviewQuestion",
     "SkillGap",

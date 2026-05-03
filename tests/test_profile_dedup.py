@@ -24,9 +24,12 @@ from src.models.candidate import (
     WorkExperience,
 )
 from src.services.profile_dedup import (
+    _backfill_language_levels,
     _canonicalise_language_name,
     _dedup_certifications,
     _dedup_languages,
+    _extract_language_levels_from_raw_text,
+    _extract_seniority,
     _is_combined_company,
     _names_match,
     _normalize_cert_name,
@@ -34,6 +37,7 @@ from src.services.profile_dedup import (
     _parse_year_range,
     _periods_are_equivalent,
     _split_combined_company,
+    _strip_seniority,
     _structural_choice_kind,
     apply_structural_choice,
     build_date_conflict_questions,
@@ -787,15 +791,17 @@ def test_dedup_languages_preserves_level_annotation():
     deduped = _dedup_languages(raw)
     assert len(deduped) == 1
     assert "Czech" in deduped[0]
-    assert "mate\u0159sk\u00FD" in deduped[0]
+    # "mateřský" is converted to CEFR C2
+    assert "C2" in deduped[0]
 
 
 def test_dedup_languages_picks_richest_level_when_multiple_provided():
     raw = ["English (B2)", "angli\u010Dtina (C1 - native)"]
     deduped = _dedup_languages(raw)
     assert len(deduped) == 1
-    # The "C1 - native" annotation is longer and therefore more informative.
-    assert "C1 - native" in deduped[0]
+    # CEFR-first: B2 arrives first, then C1 is extracted from "C1 - native".
+    # C1 > B2 so it wins. The output is a pure CEFR code.
+    assert deduped[0] == "English (C1)"
 
 
 def test_dedup_languages_drops_blanks_and_pure_whitespace():
@@ -968,3 +974,212 @@ def test_apply_structural_choice_unknown_id_is_safe_noop():
     apply_structural_choice(profile, "no-such-id", "split")
     ids = sorted(e.id for e in profile.experience)
     assert ids == ["exp-cv-combined", "exp-li-creatiweb", "exp-li-ibm"]
+
+
+# ---------------------------------------------------------------------------
+# Seniority guard: career-progression rows must never collapse
+# ---------------------------------------------------------------------------
+
+def test_extract_seniority_recognises_known_prefixes():
+    assert _extract_seniority("Junior Software QA Engineer") == "junior"
+    assert _extract_seniority("Senior Python Developer") == "senior"
+    assert _extract_seniority("Lead Architect") == "lead"
+    assert _extract_seniority("Software QA Engineer") == ""
+    assert _extract_seniority("") == ""
+
+
+def test_strip_seniority_drops_only_leading_prefix():
+    assert _strip_seniority("Junior Software QA Engineer") == \
+        "Software QA Engineer"
+    assert _strip_seniority("Senior Python Developer") == "Python Developer"
+    # No prefix - text is returned unchanged.
+    assert _strip_seniority("Software Engineer") == "Software Engineer"
+    assert _strip_seniority("") == ""
+
+
+def test_dedup_keeps_junior_avast_and_mid_gen_digital_separate():
+    """The user's reported bug: 'Junior Software QA Engineer @ Avast
+    Software (04/2022 - 06/2023)' was silently merged with the later
+    'Software QA Engineer @ Gen Digital (06/2023 - 07/2025)' because
+    Avast Software got rebranded to Gen Digital. The seniority guard
+    keeps them as two separate career-progression rows.
+    """
+    profile = CandidateProfile(
+        full_name="Test",
+        experience=[
+            WorkExperience(
+                id="exp-junior",
+                title="Junior Software QA Engineer",
+                company="Avast Software",
+                period="04/2022 - 06/2023",
+                source="linkedin",
+            ),
+            WorkExperience(
+                id="exp-mid",
+                title="Software QA Engineer",
+                company="Avast Software",
+                period="06/2023 - 07/2023",
+                source="linkedin",
+            ),
+        ],
+    )
+    deduped = dedup_profile(profile)
+    titles = sorted(e.title for e in deduped.experience)
+    assert titles == [
+        "Junior Software QA Engineer",
+        "Software QA Engineer",
+    ]
+
+
+def test_dedup_keeps_three_seniority_levels_at_same_company_separate():
+    """Junior -> mid -> Senior career path at the same company never
+    collapses, regardless of date overlap noise."""
+    profile = CandidateProfile(
+        full_name="Test",
+        experience=[
+            WorkExperience(
+                id="exp-junior",
+                title="Junior Software QA Engineer",
+                company="Gen Digital",
+                period="04/2022 - 06/2023",
+                source="linkedin",
+            ),
+            WorkExperience(
+                id="exp-mid",
+                title="Software QA Engineer",
+                company="Gen Digital",
+                period="06/2023 - 07/2025",
+                source="both",
+            ),
+            WorkExperience(
+                id="exp-senior",
+                title="Senior Software QA Engineer",
+                company="Gen Digital",
+                period="07/2025 - present",
+                source="cv",
+            ),
+        ],
+    )
+    deduped = dedup_profile(profile)
+    assert len(deduped.experience) == 3
+
+
+def test_dedup_still_merges_two_senior_rows_at_same_company():
+    """The seniority guard only blocks merges when the prefixes DIFFER -
+    two 'Senior X' entries from CV+LinkedIn must still collapse."""
+    profile = CandidateProfile(
+        full_name="Test",
+        experience=[
+            WorkExperience(
+                id="exp-cv",
+                title="Senior Python Developer",
+                company="Acme",
+                period="2021 - 2024",
+                source="cv",
+            ),
+            WorkExperience(
+                id="exp-li",
+                title="Senior Python Developer",
+                company="Acme",
+                period="2021 - 2024",
+                source="linkedin",
+            ),
+        ],
+    )
+    deduped = dedup_profile(profile)
+    assert len(deduped.experience) == 1
+    assert deduped.experience[0].source == "both"
+
+
+# ---------------------------------------------------------------------------
+# CEFR fallback: scan raw CV/LinkedIn text when AI dropped proficiency
+# ---------------------------------------------------------------------------
+
+def test_extract_language_levels_handles_linkedin_block():
+    """The exact format LinkedIn uses in its plain-text export."""
+    raw = (
+        "Languages\n"
+        "angličtina (Full Professional)\n"
+        "čeština (Native or Bilingual)\n"
+        "němčina (Elementary)\n"
+    )
+    levels = _extract_language_levels_from_raw_text(raw)
+    assert levels == {"English": "C1", "Czech": "C2", "German": "A2"}
+
+
+def test_extract_language_levels_skips_non_language_parens():
+    """``Pilsen (Czech Republic)`` syntactically looks like a proficiency
+    pair but ``Pilsen`` is not a known language - it must be skipped."""
+    raw = "Lives in Pilsen (Czech Republic). Worked at Acme (Prague)."
+    assert _extract_language_levels_from_raw_text(raw) == {}
+
+
+def test_extract_language_levels_picks_richest_when_repeated():
+    """When the same language appears twice with different proficiencies
+    (e.g. CV says B2, LinkedIn says C1) we pick the richer level."""
+    raw = "English (B2). And later: English (C1 - native)."
+    levels = _extract_language_levels_from_raw_text(raw)
+    assert levels == {"English": "C1"}
+
+
+def test_extract_language_levels_returns_empty_for_blank_text():
+    assert _extract_language_levels_from_raw_text("") == {}
+    assert _extract_language_levels_from_raw_text("   ") == {}
+
+
+def test_backfill_language_levels_only_touches_unannotated_entries():
+    raw = "angličtina (Full Professional)\nněmčina (Elementary)"
+    languages = ["English", "German (B2)", "Slovak"]
+    out = _backfill_language_levels(languages, raw)
+    # 'English' had no level -> filled to C1 from "Full Professional".
+    # 'German (B2)' already has a level -> left alone (NOT overwritten
+    # by the A2 from raw text).
+    # 'Slovak' has no level and no source mention -> stays unannotated.
+    assert out == ["English (C1)", "German (B2)", "Slovak"]
+
+
+def test_backfill_language_levels_is_noop_when_raw_text_empty():
+    languages = ["English", "Czech"]
+    assert _backfill_language_levels(languages, "") == languages
+    assert _backfill_language_levels(languages, None) == languages  # type: ignore[arg-type]
+
+
+def test_dedup_profile_fills_cefr_from_raw_linkedin_text():
+    """End-to-end: the AI emitted plain ``["Czech", "English", "German"]``
+    without proficiency annotations, but the LinkedIn export raw text
+    still contains the descriptive levels. The Python safety net must
+    convert them to CEFR codes so the sidebar renders proficiency.
+    """
+    profile = CandidateProfile(
+        full_name="Test",
+        spoken_languages=["Czech", "English", "German", "Slovak"],
+        raw_linkedin_text=(
+            "Languages\n"
+            "angličtina (Full Professional)\n"
+            "čeština (Native or Bilingual)\n"
+            "němčina (Elementary)\n"
+        ),
+    )
+    deduped = dedup_profile(profile)
+    assert deduped.spoken_languages == [
+        "Czech (C2)",
+        "English (C1)",
+        "German (A2)",
+        # Slovak was not mentioned in raw text -> stays unannotated.
+        "Slovak",
+    ]
+
+
+def test_dedup_profile_does_not_overwrite_existing_cefr_with_raw_value():
+    """When the AI did emit a CEFR level we must keep it - the raw text
+    fallback must not regress richer info to a coarser one.
+    """
+    profile = CandidateProfile(
+        full_name="Test",
+        spoken_languages=["English (C2)"],
+        # Raw text only mentions "Full Professional" (= C1) which is
+        # WORSE than the C2 the AI gave us; we must keep C2.
+        raw_linkedin_text="angličtina (Full Professional)",
+    )
+    deduped = dedup_profile(profile)
+    assert deduped.spoken_languages == ["English (C2)"]

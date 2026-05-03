@@ -241,6 +241,20 @@ _STRINGS: dict[str, dict[str, str]] = {
             "Read-only view of an existing analysis. Run a fresh analysis "
             "to enable saving."
         ),
+        # ---- refine panel ----
+        "docs.refine.placeholder": "Tell the AI what's missing or wrong...",
+        "docs.refine.button": "Refine with AI",
+        "docs.refine.status": "Refining resume with your feedback...",
+        "docs.refine.done": "Resume refined successfully",
+        "docs.refine.error": "Refinement failed: {error}",
+        "docs.refine.safety_added.explicit": (
+            "Safety net re-added these positions you mentioned were "
+            "missing: {labels}."
+        ),
+        "docs.refine.safety_added.auto": (
+            "Safety net also re-added these positions the AI dropped: "
+            "{labels}."
+        ),
         # ---- history page ----
         "history.loaded_from": "Loaded from <code>{path}</code>",
         "history.col.date": "Date",
@@ -627,6 +641,19 @@ _STRINGS: dict[str, dict[str, str]] = {
         "docs.read_only_tip": (
             "Pouze náhled existující analýzy. Spusť novou analýzu, aby šlo ukládat."
         ),
+        "docs.refine.placeholder": "Napiš AI, co chybí nebo je špatně...",
+        "docs.refine.button": "Upřesnit pomocí AI",
+        "docs.refine.status": "Upřesňuji životopis na základě tvé zpětné vazby...",
+        "docs.refine.done": "Životopis úspěšně upřesněn",
+        "docs.refine.error": "Upřesnění selhalo: {error}",
+        "docs.refine.safety_added.explicit": (
+            "Bezpečnostní vrstva doplnila tyto pozice, o kterých jsi "
+            "psal/a, že chybí: {labels}."
+        ),
+        "docs.refine.safety_added.auto": (
+            "Bezpečnostní vrstva navíc doplnila tyto pozice, které AI "
+            "vynechala: {labels}."
+        ),
         "history.loaded_from": "Načteno z <code>{path}</code>",
         "history.col.date": "Datum",
         "history.col.company": "Firma",
@@ -844,7 +871,20 @@ def unregister_listener(listener: Callable[[str], None]) -> None:
 
 def t(key: str, **kwargs: Any) -> str:
     """Look up ``key`` in the active language; fall back to English then key."""
-    table = _STRINGS.get(_current_language) or {}
+    return t_in(_current_language, key, **kwargs)
+
+
+def t_in(language: str, key: str, **kwargs: Any) -> str:
+    """Translate ``key`` into ``language`` regardless of the global UI
+    locale. Falls back to English if the requested language is missing
+    the key, then to the key itself.
+
+    Useful for content that's part of a generated document (e.g. the
+    refine safety-net message) where the document's language does not
+    necessarily match the chrome's language - the user might be reading
+    the GUI in English while exporting a Czech resume.
+    """
+    table = _STRINGS.get(language or _FALLBACK) or {}
     text = table.get(key)
     if text is None:
         fallback = _STRINGS.get(_FALLBACK) or {}
@@ -867,6 +907,7 @@ __all__ = [
     "LanguageCode",
     "get_language",
     "set_language",
+    "t_in",
     "register_listener",
     "unregister_listener",
     "t",
