@@ -30,6 +30,14 @@ class GeneratedApplicationPackage(BaseModel):
 
     generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     output_dir: str = ""
+    output_language: str = Field(
+        default="en",
+        description=(
+            "Language the user picked for the generated documents (`en` / "
+            "`cs`). The exporters use this directly so labels and diacritics "
+            "stay consistent regardless of the source CV/LinkedIn language mix."
+        ),
+    )
 
 
 __all__ = ["GeneratedApplicationPackage"]

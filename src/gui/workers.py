@@ -27,7 +27,6 @@ set and release it from the slot that runs once the worker is done.
 from __future__ import annotations
 
 import logging
-import traceback
 from collections.abc import Callable
 from typing import Any
 
@@ -55,10 +54,15 @@ class _Worker(QRunnable):
         try:
             result = self._fn(*self._args, **self._kwargs)
         except Exception as exc:
+            # Full traceback always goes to the log via logger.exception
+            # so we never lose debugging info. The GUI signal carries ONLY
+            # the human-readable message - the previous behaviour of
+            # piping the class name + truncated traceback into a
+            # QMessageBox produced ugly walls of text in the user's face
+            # (most visible on the URL-fetch error path).
             logger.exception("Background worker failed")
-            tb = traceback.format_exc(limit=2)
             try:
-                self.signals.failed.emit(f"{exc.__class__.__name__}: {exc}\n{tb}")
+                self.signals.failed.emit(str(exc) or exc.__class__.__name__)
             finally:
                 self.signals.done.emit()
         else:

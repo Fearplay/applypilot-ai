@@ -34,6 +34,7 @@ from ..models.match import MatchReport
 from ..models.package import GeneratedApplicationPackage
 from ..utils.file_utils import ensure_dir
 from ..utils.slugify import slugify
+from ..utils.text_cleaning import strip_ai_tells
 
 logger = logging.getLogger(__name__)
 
@@ -103,9 +104,6 @@ def resume_to_markdown(resume: TailoredResume) -> str:
     if contact_parts:
         parts.append("  ".join(contact_parts))
 
-    if resume.role_targeted_for:
-        parts.append(f"\n*Tailored for:* **{resume.role_targeted_for}**")
-
     parts.append("\n## Professional Summary\n")
     parts.append(resume.professional_summary)
 
@@ -134,7 +132,7 @@ def resume_to_markdown(resume: TailoredResume) -> str:
         for cert in resume.certifications:
             parts.append(f"- {cert}")
 
-    return "\n".join(parts).rstrip() + "\n"
+    return strip_ai_tells("\n".join(parts).rstrip()) + "\n"
 
 
 def cover_letter_to_markdown(cover: CoverLetter) -> str:
@@ -154,7 +152,7 @@ def cover_letter_to_markdown(cover: CoverLetter) -> str:
     lines.append(cover.closing)
     if cover.signature:
         lines.append(cover.signature)
-    return "\n".join(lines).rstrip() + "\n"
+    return strip_ai_tells("\n".join(lines).rstrip()) + "\n"
 
 
 def match_report_to_markdown(report: MatchReport, role_label: str = "") -> str:
@@ -193,7 +191,7 @@ def match_report_to_markdown(report: MatchReport, role_label: str = "") -> str:
         parts.append("\n## Summary\n")
         parts.append(report.summary)
 
-    return "\n".join(parts).rstrip() + "\n"
+    return strip_ai_tells("\n".join(parts).rstrip()) + "\n"
 
 
 def interview_questions_to_markdown(questions: Iterable[InterviewQuestion]) -> str:
@@ -207,7 +205,7 @@ def interview_questions_to_markdown(questions: Iterable[InterviewQuestion]) -> s
         if q.suggested_answer:
             parts.append(f"\n**Suggested answer:** {q.suggested_answer}")
         parts.append("")
-    return "\n".join(parts).rstrip() + "\n"
+    return strip_ai_tells("\n".join(parts).rstrip()) + "\n"
 
 
 def skill_gap_to_markdown(gaps: Iterable[SkillGap]) -> str:
@@ -224,7 +222,7 @@ def skill_gap_to_markdown(gaps: Iterable[SkillGap]) -> str:
         if gap.suggested_project:
             parts.append(f"\n**Suggested project:** {gap.suggested_project}")
         parts.append("")
-    return "\n".join(parts).rstrip() + "\n"
+    return strip_ai_tells("\n".join(parts).rstrip()) + "\n"
 
 
 def evidence_report_to_dict(items: Iterable[EvidenceItem]) -> dict:
@@ -246,7 +244,13 @@ def resume_to_docx(resume: TailoredResume, path: str | Path) -> None:
     style.font.name = "Calibri"
     style.font.size = Pt(11)
 
-    name = doc.add_heading(resume.name, level=0)
+    # Local alias - every text fragment we hand python-docx is scrubbed
+    # for AI-tell punctuation (em/en-dashes, smart quotes, ellipsis,
+    # exotic whitespace) so DOCX exports look as plain as the markdown
+    # version.
+    s = strip_ai_tells
+
+    name = doc.add_heading(s(resume.name), level=0)
     for run in name.runs:
         run.bold = True
 
@@ -258,30 +262,26 @@ def resume_to_docx(resume: TailoredResume, path: str | Path) -> None:
     if resume.portfolio:
         contact_bits.append(f"Portfolio: {resume.portfolio}")
     if contact_bits:
-        doc.add_paragraph("  |  ".join(contact_bits))
-
-    if resume.role_targeted_for:
-        p = doc.add_paragraph()
-        p.add_run(f"Tailored for: {resume.role_targeted_for}").italic = True
+        doc.add_paragraph(s("  |  ".join(contact_bits)))
 
     doc.add_heading("Professional Summary", level=1)
-    doc.add_paragraph(resume.professional_summary)
+    doc.add_paragraph(s(resume.professional_summary))
 
     if resume.technical_skills:
         doc.add_heading("Technical Skills", level=1)
-        doc.add_paragraph(", ".join(resume.technical_skills))
+        doc.add_paragraph(s(", ".join(resume.technical_skills)))
 
     def _section(title: str, items: list) -> None:
         if not items:
             return
         doc.add_heading(title, level=1)
-        for s in items:
-            doc.add_heading(s.title, level=2)
-            if s.subtitle:
+        for section in items:
+            doc.add_heading(s(section.title), level=2)
+            if section.subtitle:
                 p = doc.add_paragraph()
-                p.add_run(s.subtitle).italic = True
-            for b in s.bullets:
-                doc.add_paragraph(b.text, style="List Bullet")
+                p.add_run(s(section.subtitle)).italic = True
+            for b in section.bullets:
+                doc.add_paragraph(s(b.text), style="List Bullet")
 
     _section("Projects", resume.projects)
     _section("Experience", resume.experience)
@@ -290,7 +290,7 @@ def resume_to_docx(resume: TailoredResume, path: str | Path) -> None:
     if resume.certifications:
         doc.add_heading("Certifications", level=1)
         for cert in resume.certifications:
-            doc.add_paragraph(cert, style="List Bullet")
+            doc.add_paragraph(s(cert), style="List Bullet")
 
     doc.save(str(path))
 
@@ -304,17 +304,19 @@ def cover_letter_to_docx(cover: CoverLetter, path: str | Path) -> None:
     style.font.name = "Calibri"
     style.font.size = Pt(11)
 
-    if cover.role and cover.company:
-        doc.add_heading(f"Cover letter - {cover.role} at {cover.company}", level=1)
-    elif cover.role:
-        doc.add_heading(f"Cover letter - {cover.role}", level=1)
+    s = strip_ai_tells  # see resume_to_docx for the rationale
 
-    doc.add_paragraph(cover.salutation)
+    if cover.role and cover.company:
+        doc.add_heading(s(f"Cover letter - {cover.role} at {cover.company}"), level=1)
+    elif cover.role:
+        doc.add_heading(s(f"Cover letter - {cover.role}"), level=1)
+
+    doc.add_paragraph(s(cover.salutation))
     for para in cover.paragraphs:
-        doc.add_paragraph(para)
-    doc.add_paragraph(cover.closing)
+        doc.add_paragraph(s(para))
+    doc.add_paragraph(s(cover.closing))
     if cover.signature:
-        doc.add_paragraph(cover.signature)
+        doc.add_paragraph(s(cover.signature))
 
     doc.save(str(path))
 
@@ -333,19 +335,17 @@ _RESUME_LABELS: dict[str, dict[str, str]] = {
         "online": "Online",
         "tech_stack": "Tech Stack",
         "languages": "Languages",
-        "tailored_for": "Tailored for",
     },
     "cs": {
         "profile": "Profil",
         "experience": "Pracovní zkušenosti",
         "projects": "Vlastní projekty",
         "education": "Vzdělání",
-        "certifications": "Certifikáty &amp; kurzy",
+        "certifications": "Certifikáty & kurzy",
         "contact": "Kontakt",
         "online": "Online",
         "tech_stack": "Tech Stack",
         "languages": "Jazyky",
-        "tailored_for": "Tailored for",
     },
 }
 
@@ -387,7 +387,7 @@ _SKILL_GROUP_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
 _SKILL_GROUP_CS_LABELS: dict[str, str] = {
     "Test Automation": "Test Automation",
     "Languages": "Jazyky",
-    "CI/CD & Tooling": "CI/CD &amp; nástroje",
+    "CI/CD & Tooling": "CI/CD & nástroje",
     "Frameworks": "Frameworky",
     "AI / Data": "AI / Data",
     "Databases": "Databáze",
@@ -443,7 +443,10 @@ def _group_skills(skills: Iterable[str]) -> list[tuple[str, list[str]]]:
 
 
 def _esc(text: str | None) -> str:
-    return html.escape(text or "", quote=True)
+    """HTML-escape ``text`` after scrubbing AI-tell punctuation (em/en
+    dashes, curly quotes, ellipsis, exotic whitespace).
+    """
+    return html.escape(strip_ai_tells(text or ""), quote=True)
 
 
 def _localised_group_label(group: str, lang: str) -> str:
@@ -596,11 +599,7 @@ def _styled_sidebar(
             + "</div>"
         )
 
-    role_line = ""
-    if resume.role_targeted_for:
-        role_line = f'<div class="role">{_esc(resume.role_targeted_for)}</div>'
-
-    sections: list[str] = [f'<h1>{_esc(resume.name or "Candidate")}</h1>{role_line}']
+    sections: list[str] = [f'<h1>{_esc(resume.name or "Candidate")}</h1>']
     if contact_lines:
         sections.append(
             f'<div class="sb-section"><h3>{_esc(labels["contact"])}</h3>'
@@ -626,12 +625,6 @@ def _styled_sidebar(
 
 def _styled_main(resume: TailoredResume, labels: dict[str, str]) -> str:
     parts: list[str] = []
-
-    if resume.role_targeted_for:
-        parts.append(
-            f'<p class="tailored">{_esc(labels["tailored_for"])}: '
-            f'<strong>{_esc(resume.role_targeted_for)}</strong></p>'
-        )
 
     if resume.professional_summary:
         parts.append(
@@ -688,6 +681,7 @@ def _styled_main(resume: TailoredResume, labels: dict[str, str]) -> str:
 def tailored_resume_to_styled_html(
     resume: TailoredResume,
     candidate: CandidateProfile | None = None,
+    output_language: str = "",
 ) -> str:
     """Render a printable two-column A4 HTML resume.
 
@@ -696,14 +690,19 @@ def tailored_resume_to_styled_html(
     spoken languages, plus a main column with profile, experience,
     projects, education and certifications. CSS is inlined so the output
     file is fully self-contained.
+
+    ``output_language`` overrides the diacritic-sniff fallback so the
+    section headers stay consistent with what the user picked in the
+    output-language dialog. Pass ``""`` to keep the legacy auto-detection
+    (used by tests that don't have a ``GeneratedApplicationPackage``).
     """
-    lang = _detect_resume_language(resume)
+    lang = (output_language or "").strip().lower()
+    if lang not in _RESUME_LABELS:
+        # No explicit hint - fall back to the original diacritic heuristic
+        # so callers that don't yet pipe the language through still work.
+        lang = _detect_resume_language(resume)
     labels = _RESUME_LABELS[lang]
-    title = (
-        f"{resume.name or 'Resume'} - {resume.role_targeted_for}"
-        if resume.role_targeted_for
-        else resume.name or "Resume"
-    )
+    title = resume.name or "Resume"
     sidebar = _styled_sidebar(resume, candidate, labels, lang)
     main = _styled_main(resume, labels)
     return (
@@ -791,7 +790,9 @@ def export_package(
     resume_to_docx(package.tailored_resume, paths.resume_docx)
     paths.resume_html.write_text(
         tailored_resume_to_styled_html(
-            package.tailored_resume, package.candidate_profile
+            package.tailored_resume,
+            package.candidate_profile,
+            output_language=package.output_language,
         ),
         encoding="utf-8",
     )

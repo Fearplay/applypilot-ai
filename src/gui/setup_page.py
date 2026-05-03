@@ -341,11 +341,28 @@ class SetupPage(QWidget):
         if "JSON" in message or "config blob" in message:
             self._js_hint_lbl.setVisible(True)
         self.set_status(t("setup.status.fetch_failed"))
-        QMessageBox.warning(
-            self,
-            t("setup.error.fetch.title"),
-            t("setup.error.fetch.body", message=message),
+        # Friendly two-button dialog instead of dumping the full
+        # JobFetchError message on the user. Most automatic-fetch
+        # failures on real career sites are JS-only pages that the
+        # Playwright path handles fine, so we offer it as the default
+        # action. The full error message is logged in the background.
+        logger.info("Auto-fetch failed: %s", message)
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Information)
+        box.setWindowTitle(t("setup.error.fetch.retry_title"))
+        box.setText(t("setup.error.fetch.retry_body"))
+        try_btn = box.addButton(
+            t("setup.error.fetch.try_playwright"), QMessageBox.AcceptRole
         )
+        cancel_btn = box.addButton(
+            t("setup.error.fetch.cancel"), QMessageBox.RejectRole
+        )
+        box.setDefaultButton(try_btn)
+        box.exec()
+        if box.clickedButton() is try_btn:
+            self._on_wrong_content_clicked()
+        elif box.clickedButton() is cancel_btn:
+            self.set_status(t("setup.status.fetch_failed"))
 
     def _on_wrong_content_clicked(self) -> None:
         url = (self._url_input.text().strip() or self._current_url or "").strip()

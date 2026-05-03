@@ -222,7 +222,9 @@ class DocumentsPage(QWidget):
         self._resume_edit.setPlainText(resume_to_markdown(package.tailored_resume))
         self._set_modern_resume_html(
             tailored_resume_to_styled_html(
-                package.tailored_resume, package.candidate_profile
+                package.tailored_resume,
+                package.candidate_profile,
+                output_language=package.output_language,
             )
         )
         self._cover_edit.setPlainText(cover_letter_to_markdown(package.cover_letter))

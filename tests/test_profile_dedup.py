@@ -19,13 +19,19 @@ from __future__ import annotations
 
 from src.models.candidate import (
     CandidateProfile,
+    CertificationEntry,
     EducationEntry,
     WorkExperience,
 )
 from src.services.profile_dedup import (
+    _canonicalise_language_name,
+    _dedup_certifications,
+    _dedup_languages,
     _names_match,
+    _normalize_cert_name,
     _normalize_name,
     _parse_year_range,
+    _periods_are_equivalent,
     build_date_conflict_questions,
     build_source_discrepancy_questions,
     dedup_profile,
@@ -556,14 +562,14 @@ def test_excluded_ids_does_not_pull_in_date_discrepancy_answers():
 # CV-vs-LinkedIn cross-language ČZU example (documents the limit)
 # ---------------------------------------------------------------------------
 
-def test_dedup_keeps_czech_english_university_pair_separate_when_no_token_overlap():
-    """Documents the heuristic's ceiling: ``Provozně ekonomická fakulta ČZU
-    v Praze`` and ``Faculty of Economics and Management, Czech University
-    of Life Sciences Prague`` share no common tokens after normalisation
-    (``czu`` vs ``cz`` after the equivalence map) so the dedup pass keeps
-    them separate. The AI prompt is the primary mechanism for merging
-    these; the discrepancy clarifying question covers anything the AI
-    misses by asking the user directly."""
+def test_dedup_merges_czech_english_university_pair_with_overlapping_years():
+    """The user's bug: CV (English) and LinkedIn (Czech) describe the
+    SAME university with overlapping year ranges. After expanding the
+    cross-language token equivalence map (``ekonomicka`` <-> ``economics``,
+    ``informatika`` <-> ``informatics``) the strict heuristic catches this
+    pair and the profile shows ONE entry, with the date discrepancy
+    captured in ``notes`` for the GUI to surface to the user.
+    """
     profile = CandidateProfile(
         full_name="Test",
         education=[
@@ -588,10 +594,226 @@ def test_dedup_keeps_czech_english_university_pair_separate_when_no_token_overla
     )
 
     deduped = dedup_profile(profile)
-    # Heuristic CANNOT merge these without help from the AI side.
-    assert len(deduped.education) == 2
-    # But the GUI WILL ask the user about both single-source rows.
-    questions = build_source_discrepancy_questions(deduped)
-    qids = {q.id for q in questions}
-    assert "discrepancy:edu-0" in qids
-    assert "discrepancy:edu-1" in qids
+    assert len(deduped.education) == 1
+    merged = deduped.education[0]
+    assert merged.source == "both"
+    assert merged.notes and "CV" in merged.notes and "LinkedIn" in merged.notes
+
+
+# ---------------------------------------------------------------------------
+# Cross-language education merge via expanded token equivalence map
+# ---------------------------------------------------------------------------
+
+def test_dedup_education_merges_user_bug_pair_via_token_equivalences():
+    """The user's actual case from the duplicate-resume bug: CV (English)
+    and LinkedIn (Czech) describe the same Prague university with NO
+    direct token overlap. After adding ``ekonomicka`` <-> ``economics``
+    and ``informatika`` <-> ``informatics`` to the cross-language token
+    equivalence map, both names normalise to share enough tokens
+    (``economics`` + ``praha``) that the strict heuristic merges them.
+    """
+    profile = CandidateProfile(
+        full_name="Test",
+        education=[
+            EducationEntry(
+                id="edu-0",
+                institution="Provozně ekonomická fakulta ČZU v Praze",
+                degree="Bakalář (Bc.), Informatika",
+                period="2021 - 2023",
+                source="linkedin",
+            ),
+            EducationEntry(
+                id="edu-1",
+                institution=(
+                    "Faculty of Economics and Management, "
+                    "Czech University of Life Sciences Prague"
+                ),
+                degree="Computer Science studies",
+                period="2021 - 2024",
+                source="cv",
+            ),
+        ],
+    )
+
+    deduped = dedup_profile(profile)
+    assert len(deduped.education) == 1
+    assert deduped.education[0].source == "both"
+    # Date conflict (2023 vs 2024) is preserved in notes for the GUI.
+    assert "CV" in (deduped.education[0].notes or "")
+    assert "LinkedIn" in (deduped.education[0].notes or "")
+
+
+# ---------------------------------------------------------------------------
+# build_date_conflict_questions: skip when year ranges already match
+# ---------------------------------------------------------------------------
+
+def test_periods_are_equivalent_recognises_year_range_match():
+    assert _periods_are_equivalent(
+        "06/2023 - 07/2025",
+        "\u010Dervna 2023 - \u010Dervence 2025",
+    )
+    assert _periods_are_equivalent("2021 - 2023", "ledna 2021 - prosince 2023")
+    assert not _periods_are_equivalent("2021 - 2024", "2021 - 2023")
+
+
+def test_build_date_conflict_questions_skips_when_year_ranges_match():
+    """The screenshot showed the user being asked about the SAME period
+    written two ways ('06/2023 - 07/2025' vs 'června 2023 - července
+    2025'). Year-range comparison must short-circuit that question.
+    """
+    profile = CandidateProfile(
+        full_name="Test",
+        experience=[
+            WorkExperience(
+                id="exp-0",
+                title="Senior QA Engineer",
+                company="Gen Digital",
+                period="06/2023 - 07/2025",
+                source="both",
+                notes=(
+                    "CV: 06/2023 - 07/2025 | "
+                    "LinkedIn: \u010Dervna 2023 - \u010Dervence 2025"
+                ),
+            ),
+        ],
+    )
+
+    assert build_date_conflict_questions(profile) == []
+
+
+# ---------------------------------------------------------------------------
+# Certifications dedup
+# ---------------------------------------------------------------------------
+
+def test_normalize_cert_name_strips_issuer_prefix_and_year():
+    assert _normalize_cert_name("Oracle Academy - Java Programming · 2021") == \
+        "java programming"
+    assert _normalize_cert_name("Engeto - Python Academy (12-week) · 2020") == \
+        "python academy 12 week"
+    assert _normalize_cert_name("Java Programming") == "java programming"
+
+
+def test_dedup_certifications_collapses_oracle_academy_prefix_pair():
+    """The bug from the user's resume: ``Java Programming`` and
+    ``Oracle Academy - Java Programming`` showed up as two cert rows.
+    """
+    entries = [
+        CertificationEntry(
+            name="Oracle Academy - Java Programming",
+            issuer="Oracle Academy",
+            year="2021",
+        ),
+        CertificationEntry(name="Java Programming"),
+    ]
+    deduped = _dedup_certifications(entries)
+    assert len(deduped) == 1
+    # Keeps the longer, more specific name.
+    assert "Oracle Academy" in deduped[0].name
+    assert deduped[0].issuer == "Oracle Academy"
+    assert deduped[0].year == "2021"
+
+
+def test_dedup_certifications_collapses_python_akademie_pair():
+    entries = [
+        CertificationEntry(
+            name="Engeto - Python Academy (12-week)",
+            issuer="Engeto",
+            year="2020",
+        ),
+        CertificationEntry(name="Python Akademie"),
+    ]
+    deduped = _dedup_certifications(entries)
+    assert len(deduped) == 1
+    assert deduped[0].issuer == "Engeto"
+
+
+def test_dedup_certifications_keeps_distinct_courses():
+    entries = [
+        CertificationEntry(name="Oracle Academy - Java Programming", year="2021"),
+        CertificationEntry(name="Oracle Academy - Database Foundations", year="2020"),
+    ]
+    deduped = _dedup_certifications(entries)
+    assert len(deduped) == 2
+
+
+def test_dedup_certifications_drops_blank_names():
+    entries = [
+        CertificationEntry(name=""),
+        CertificationEntry(name="Real Course"),
+    ]
+    deduped = _dedup_certifications(entries)
+    assert [c.name for c in deduped] == ["Real Course"]
+
+
+# ---------------------------------------------------------------------------
+# Spoken languages dedup
+# ---------------------------------------------------------------------------
+
+def test_canonicalise_language_name_maps_czech_synonyms_to_english_label():
+    assert _canonicalise_language_name("\u010De\u0161tina") == "Czech"
+    assert _canonicalise_language_name("Czech") == "Czech"
+    assert _canonicalise_language_name("angli\u010Dtina") == "English"
+    assert _canonicalise_language_name("n\u011Bm\u010Dina") == "German"
+    assert _canonicalise_language_name("slovak") == "Slovak"
+    # Unknown languages are returned verbatim so we don't silently drop them.
+    assert _canonicalise_language_name("Klingon") == "Klingon"
+
+
+def test_dedup_languages_collapses_czech_cestina_and_english_anglictina():
+    """The bug from the user's resume: the sidebar listed Czech twice
+    ('Czech' + 'čeština') and English twice ('English' + 'angličtina').
+    """
+    raw = [
+        "Czech",
+        "English",
+        "Slovak",
+        "German",
+        "\u010De\u0161tina",
+        "angli\u010Dtina",
+        "n\u011Bm\u010Dina",
+    ]
+    deduped = _dedup_languages(raw)
+    assert deduped == ["Czech", "English", "Slovak", "German"]
+
+
+def test_dedup_languages_preserves_level_annotation():
+    raw = ["Czech (mate\u0159sk\u00FD)", "\u010De\u0161tina"]
+    deduped = _dedup_languages(raw)
+    assert len(deduped) == 1
+    assert "Czech" in deduped[0]
+    assert "mate\u0159sk\u00FD" in deduped[0]
+
+
+def test_dedup_languages_picks_richest_level_when_multiple_provided():
+    raw = ["English (B2)", "angli\u010Dtina (C1 - native)"]
+    deduped = _dedup_languages(raw)
+    assert len(deduped) == 1
+    # The "C1 - native" annotation is longer and therefore more informative.
+    assert "C1 - native" in deduped[0]
+
+
+def test_dedup_languages_drops_blanks_and_pure_whitespace():
+    deduped = _dedup_languages(["", "  ", "Czech"])
+    assert deduped == ["Czech"]
+
+
+# ---------------------------------------------------------------------------
+# dedup_profile: end-to-end with cert + language fields
+# ---------------------------------------------------------------------------
+
+def test_dedup_profile_collapses_certifications_and_languages():
+    profile = CandidateProfile(
+        full_name="Test",
+        certifications=[
+            CertificationEntry(name="Oracle Academy - Java Programming", year="2021"),
+            CertificationEntry(name="Java Programming"),
+            CertificationEntry(name="Engeto - Python Academy", year="2020"),
+            CertificationEntry(name="Python Akademie"),
+        ],
+        spoken_languages=[
+            "Czech", "English", "\u010De\u0161tina", "angli\u010Dtina",
+        ],
+    )
+    deduped = dedup_profile(profile)
+    assert len(deduped.certifications) == 2
+    assert deduped.spoken_languages == ["Czech", "English"]

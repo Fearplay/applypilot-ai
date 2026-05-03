@@ -177,3 +177,108 @@ def test_styled_html_uses_english_labels_for_english_resume():
     assert "Tech Stack" in html
     # No Czech labels leak in.
     assert "Pracovní zkušenosti" not in html
+
+
+def test_styled_html_does_not_render_tailored_for_paragraph_or_role():
+    """The user explicitly asked for a generic-looking resume - we must
+    not put 'Tailored for: ...' anywhere in the output, and the role
+    should not appear under the candidate's name in the sidebar either.
+    """
+    resume = TailoredResume(
+        name="John Doe",
+        professional_summary="QA engineer.",
+        technical_skills=["Python"],
+        role_targeted_for="AI Software Engineer",
+    )
+    html = tailored_resume_to_styled_html(resume)
+    assert "Tailored for" not in html
+    assert "AI Software Engineer" not in html  # role not surfaced anywhere
+    assert '<div class="role"' not in html
+    assert '<p class="tailored"' not in html
+
+
+def test_styled_html_does_not_double_encode_ampersand_in_section_labels():
+    """Issue: `_RESUME_LABELS["cs"]["certifications"]` used to be the
+    pre-encoded string ``"Certifikáty &amp; kurzy"``. After ``_esc()``
+    it became ``"Certifikáty &amp;amp; kurzy"`` in the rendered HTML.
+    Now that the dictionary holds a plain ``&`` we must see ``&amp;``
+    exactly once and never the double-encoded ``&amp;amp;``.
+    """
+    resume = TailoredResume(
+        name="Jana Nováková",
+        professional_summary="Testerka.",
+        technical_skills=[
+            "Python", "Playwright", "Jenkins", "Docker", "Git",
+        ],
+        certifications=["ISTQB Foundation"],
+        role_targeted_for="QA",
+    )
+    html = tailored_resume_to_styled_html(resume, output_language="cs")
+    assert "&amp;amp;" not in html
+    assert "Certifikáty &amp; kurzy" in html
+    assert "CI/CD &amp; nástroje" in html or "CI/CD &amp;" not in html
+    # Double-encoded would have looked like "CI/CD &amp;amp; nástroje".
+    assert "CI/CD &amp;amp;" not in html
+
+
+def test_styled_html_uses_explicit_output_language_over_diacritic_sniff():
+    """When `output_language` is passed it overrides the diacritic
+    heuristic. A Czech-diacritic-heavy resume rendered with
+    ``output_language='en'`` must still get English section labels.
+    """
+    resume = TailoredResume(
+        name="Jana Nováková",
+        professional_summary=(
+            "Zkušená inženýrka se silnou orientací na automatizaci. "
+            "Zaměřuji se na Playwright, Pythonové testy a Jenkins."
+        ),
+        technical_skills=["Python", "Playwright"],
+        experience=[
+            ResumeSection(
+                title="Senior QA",
+                subtitle="Gen Digital",
+                bullets=[ResumeBullet(text="Vedl jsem tým automatizace.")],
+            )
+        ],
+        role_targeted_for="QA",
+    )
+    html_en = tailored_resume_to_styled_html(resume, output_language="en")
+    # Use closing-tag-anchored substrings so "Profile" doesn't trip the
+    # bare-substring "Profil" check (and vice versa for Czech).
+    assert "<h2>Profile</h2>" in html_en
+    assert "<h2>Experience</h2>" in html_en
+    assert "Pracovní zkušenosti" not in html_en
+
+    html_cs = tailored_resume_to_styled_html(resume, output_language="cs")
+    assert "<h2>Profil</h2>" in html_cs
+    assert "<h2>Pracovní zkušenosti</h2>" in html_cs
+    assert "<h2>Experience</h2>" not in html_cs
+
+
+def test_resume_to_markdown_strips_em_and_en_dashes():
+    """AI providers love em / en dashes. The exporter must scrub them
+    so the user-facing markdown looks human-typed.
+    """
+    from src.services.export_service import resume_to_markdown
+
+    resume = TailoredResume(
+        name="John Doe",
+        professional_summary="QA engineer \u2014 4 years \u2013 Playwright fan.",
+        technical_skills=["Python"],
+        experience=[
+            ResumeSection(
+                title="Senior QA \u2014 Gen Digital",
+                subtitle="Praha \u2013 2021 \u2013 2025",
+                bullets=[
+                    ResumeBullet(text="Built \u201cawesome\u201d test suites \u2026"),
+                ],
+            )
+        ],
+    )
+    md = resume_to_markdown(resume)
+    assert "\u2014" not in md
+    assert "\u2013" not in md
+    assert "\u2026" not in md
+    assert "\u201c" not in md and "\u201d" not in md
+    assert "QA engineer - 4 years - Playwright fan." in md
+    assert 'Built "awesome" test suites ...' in md
