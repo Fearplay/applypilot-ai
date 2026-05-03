@@ -82,6 +82,7 @@ class OpenAICompatibleProvider(BaseAIProvider):
         self._timeout = settings.ai_timeout
         self._temperature = settings.ai_temperature
         self._model = settings.ai_model
+        self._debug_prompts = settings.ai_debug_prompts
         self._supports_json_schema: bool | None = None
         self.reason = (
             f"OpenAI-compatible: base_url={settings.ai_base_url}, model={self._model}"
@@ -89,16 +90,81 @@ class OpenAICompatibleProvider(BaseAIProvider):
         self._audit_log = (
             get_ai_request_logger() if settings.ai_request_log else None
         )
+        self._current_call: str = "unknown"
 
     # ------------------------------------------------------------------ http
-    def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
+    @staticmethod
+    def _payload_size(payload: dict[str, Any]) -> int:
+        total = 0
+        for msg in payload.get("messages", []):
+            content = msg.get("content")
+            if isinstance(content, str):
+                total += len(content)
+        return total
+
+    def _log_payload(self, payload: dict[str, Any]) -> None:
+        size = self._payload_size(payload)
+        # Rough heuristic: ~4 chars per token is the OpenAI rule of thumb.
+        approx_tokens = size // 4
+        logger.info(
+            "AI call=%s model=%s messages=%d input_chars=%d ~tokens=%d",
+            self._current_call,
+            payload.get("model"),
+            len(payload.get("messages", [])),
+            size,
+            approx_tokens,
+        )
         if self._audit_log is not None:
             self._audit_log.info(
-                "POST %s model=%s messages=%d",
+                "POST %s call=%s model=%s messages=%d input_chars=%d ~tokens=%d",
                 self._endpoint,
+                self._current_call,
                 payload.get("model"),
                 len(payload.get("messages", [])),
+                size,
+                approx_tokens,
             )
+        if self._debug_prompts:
+            for idx, msg in enumerate(payload.get("messages", [])):
+                content = msg.get("content") or ""
+                preview = content if len(content) <= 1500 else content[:1500] + "...[truncated]"
+                logger.debug(
+                    "AI call=%s message[%d] role=%s content=%s",
+                    self._current_call,
+                    idx,
+                    msg.get("role"),
+                    preview,
+                )
+
+    def _log_response(self, response: dict[str, Any]) -> None:
+        usage = response.get("usage") or {}
+        prompt_tokens = usage.get("prompt_tokens")
+        completion_tokens = usage.get("completion_tokens")
+        total_tokens = usage.get("total_tokens")
+        finish_reason = None
+        choices = response.get("choices") or []
+        if choices:
+            finish_reason = choices[0].get("finish_reason")
+        logger.info(
+            "AI reply call=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s finish=%s",
+            self._current_call,
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+            finish_reason,
+        )
+        if self._audit_log is not None:
+            self._audit_log.info(
+                "REPLY call=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s finish=%s",
+                self._current_call,
+                prompt_tokens,
+                completion_tokens,
+                total_tokens,
+                finish_reason,
+            )
+
+    def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._log_payload(payload)
         try:
             resp = requests.post(
                 self._endpoint,
@@ -114,11 +180,13 @@ class OpenAICompatibleProvider(BaseAIProvider):
                 f"AI provider returned HTTP {resp.status_code}: {resp.text[:300]}"
             )
         try:
-            return resp.json()
+            data = resp.json()
         except ValueError as exc:
             raise OpenAIProviderError(
                 f"AI provider returned non-JSON body: {resp.text[:200]}"
             ) from exc
+        self._log_response(data)
+        return data
 
     def _completion_text(self, response: dict[str, Any]) -> str:
         choices = response.get("choices") or []
@@ -218,6 +286,15 @@ class OpenAICompatibleProvider(BaseAIProvider):
             ) from exc
 
     # ------------------------------------------------------------------ API
+    def _run(self, call_name: str, system: str, user: str, schema: type[T]) -> T:
+        """Execute a structured call while tagging logs with ``call_name``."""
+        previous = self._current_call
+        self._current_call = call_name
+        try:
+            return self._structured_call(system, user, schema)
+        finally:
+            self._current_call = previous
+
     def analyze_job(
         self, raw_text: str, source_url: str | None = None
     ) -> JobPosting:
@@ -225,7 +302,7 @@ class OpenAICompatibleProvider(BaseAIProvider):
         # role isn't known yet.
         system = prompts.system_prompt_for("other_it")
         user = prompts.analyze_job_user_prompt(raw_text, source_url)
-        result = self._structured_call(system, user, JobPosting)
+        result = self._run("analyze_job", system, user, JobPosting)
         if not result.raw_text:
             object.__setattr__(result, "raw_text", raw_text)
         if not result.source_url:
@@ -243,14 +320,14 @@ class OpenAICompatibleProvider(BaseAIProvider):
         user = prompts.analyze_candidate_user_prompt(
             cv_text, linkedin_text, github_username, list(github_projects)
         )
-        return self._structured_call(system, user, CandidateProfile)
+        return self._run("analyze_candidate", system, user, CandidateProfile)
 
     def generate_clarifying_questions(
         self, job: JobPosting, candidate: CandidateProfile
     ) -> list[ClarifyingQuestion]:
         system = prompts.system_prompt_for(job.role_type)
         user = prompts.clarifying_questions_user_prompt(job, candidate)
-        wrapped = self._structured_call(system, user, _QuestionsWrapper)
+        wrapped = self._run("clarifying_questions", system, user, _QuestionsWrapper)
         return list(wrapped.items)
 
     def generate_match_report(
@@ -262,7 +339,7 @@ class OpenAICompatibleProvider(BaseAIProvider):
     ) -> MatchReport:
         system = prompts.system_prompt_for(job.role_type)
         user = prompts.match_report_user_prompt(job, candidate, answers, list(evidence))
-        return self._structured_call(system, user, MatchReport)
+        return self._run("match_report", system, user, MatchReport)
 
     def generate_resume(
         self,
@@ -273,7 +350,7 @@ class OpenAICompatibleProvider(BaseAIProvider):
     ) -> TailoredResume:
         system = prompts.system_prompt_for(job.role_type)
         user = prompts.resume_user_prompt(job, candidate, answers, list(evidence))
-        return self._structured_call(system, user, TailoredResume)
+        return self._run("resume", system, user, TailoredResume)
 
     def generate_cover_letter(
         self,
@@ -283,14 +360,14 @@ class OpenAICompatibleProvider(BaseAIProvider):
     ) -> CoverLetter:
         system = prompts.system_prompt_for(job.role_type)
         user = prompts.cover_letter_user_prompt(job, candidate, answers)
-        return self._structured_call(system, user, CoverLetter)
+        return self._run("cover_letter", system, user, CoverLetter)
 
     def generate_interview_questions(
         self, job: JobPosting, candidate: CandidateProfile
     ) -> list[InterviewQuestion]:
         system = prompts.system_prompt_for(job.role_type)
         user = prompts.interview_questions_user_prompt(job, candidate)
-        wrapped = self._structured_call(system, user, _InterviewWrapper)
+        wrapped = self._run("interview_questions", system, user, _InterviewWrapper)
         return list(wrapped.items)
 
     def generate_skill_gap_plan(
@@ -298,7 +375,7 @@ class OpenAICompatibleProvider(BaseAIProvider):
     ) -> list[SkillGap]:
         system = prompts.system_prompt_for(job.role_type)
         user = prompts.skill_gap_user_prompt(match_report, job)
-        wrapped = self._structured_call(system, user, _GapsWrapper)
+        wrapped = self._run("skill_gap_plan", system, user, _GapsWrapper)
         return list(wrapped.items)
 
 

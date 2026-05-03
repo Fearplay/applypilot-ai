@@ -86,6 +86,7 @@ class Settings:
     ai_timeout: int
     ai_temperature: float
     ai_request_log: bool
+    ai_debug_prompts: bool
 
     github_token: str
 
@@ -138,6 +139,7 @@ def load_settings(env_file: str | os.PathLike[str] | None = None) -> Settings:
         ai_timeout=_int_env("AI_TIMEOUT", 60),
         ai_temperature=_float_env("AI_TEMPERATURE", 0.2),
         ai_request_log=_bool_env("AI_REQUEST_LOG", True),
+        ai_debug_prompts=_bool_env("AI_DEBUG_PROMPTS", False),
         github_token=os.getenv("GITHUB_TOKEN", "").strip(),
     )
 
