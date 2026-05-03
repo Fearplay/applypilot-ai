@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from pydantic import BaseModel
+
 from ..models.job import ROLE_TYPE_LABELS, JobPosting, RoleType
 from ..models.candidate import CandidateProfile
 from ..models.match import AnswersBundle, ClarifyingAnswer, MatchReport
@@ -187,12 +189,43 @@ def _trim(text: str, limit: int = 12000) -> str:
     return f"{head}\n...[truncated]...\n{tail}"
 
 
-def _dump(model: Any) -> str:
+def _to_jsonable(value: Any) -> Any:
+    """Recursively convert Pydantic models / containers into JSON-safe data."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json")
+    if isinstance(value, dict):
+        return {str(k): _to_jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_to_jsonable(v) for v in value]
+    return value
+
+
+def _dump(model: Any, *, exclude: set[str] | None = None) -> str:
+    """Serialize ``model`` to indented JSON, handling Pydantic models and lists.
+
+    ``exclude`` only applies when ``model`` is a single Pydantic model and lets
+    callers strip very large fields (e.g. ``JobPosting.raw_text``) before they
+    are sent to the provider, which keeps token usage low.
+    """
     if model is None:
         return "null"
-    if hasattr(model, "model_dump"):
-        return json.dumps(model.model_dump(mode="json"), ensure_ascii=False, indent=2)
-    return json.dumps(model, ensure_ascii=False, indent=2)
+    if isinstance(model, BaseModel):
+        data = model.model_dump(mode="json", exclude=exclude or None)
+        return json.dumps(data, ensure_ascii=False, indent=2)
+    return json.dumps(_to_jsonable(model), ensure_ascii=False, indent=2)
+
+
+# Fields we strip when dumping a JobPosting into a prompt: the raw text is
+# already provided to the AI when we first analysed the job, and re-sending it
+# in every downstream call (match report, resume, cover letter, ...) was
+# burning a lot of tokens for zero added signal.
+_JOB_PROMPT_EXCLUDE: set[str] = {"raw_text"}
+
+
+def _dump_job(job: JobPosting | None) -> str:
+    return _dump(job, exclude=_JOB_PROMPT_EXCLUDE)
 
 
 def analyze_job_user_prompt(raw_text: str, source_url: str | None = None) -> str:
@@ -243,7 +276,7 @@ def clarifying_questions_user_prompt(
         "in the candidate inputs, generate a ClarifyingQuestion the user can "
         "answer to confirm or reject the skill. Limit to 8 questions, ordered "
         "by importance for this role.\n\n"
-        "JOB:\n" + _dump(job) + "\n\n"
+        "JOB:\n" + _dump_job(job) + "\n\n"
         "CANDIDATE:\n" + _dump(candidate)
     )
 
@@ -260,7 +293,7 @@ def match_report_user_prompt(
         "skills the candidate has not demonstrated. Write any free-text "
         "fields (summary, recommended_improvements) in the SAME language as "
         "the job posting (Czech or English).\n\n"
-        "JOB:\n" + _dump(job) + "\n\n"
+        "JOB:\n" + _dump_job(job) + "\n\n"
         "CANDIDATE:\n" + _dump(candidate) + "\n\n"
         "USER ANSWERS:\n" + _dump(answers) + "\n\n"
         "EVIDENCE:\n" + _dump(evidence)
@@ -288,7 +321,7 @@ def resume_user_prompt(
         "every section subtitle in the SAME language as the job posting "
         "(Czech or English). Skill / technology names stay in their canonical "
         "form (e.g. 'Playwright', 'CI/CD').\n\n"
-        "JOB:\n" + _dump(job) + "\n\n"
+        "JOB:\n" + _dump_job(job) + "\n\n"
         "CANDIDATE:\n" + _dump(candidate) + "\n\n"
         "USER ANSWERS:\n" + _dump(answers) + "\n\n"
         "EVIDENCE:\n" + _dump(evidence)
@@ -306,7 +339,7 @@ def cover_letter_user_prompt(
         "achievements / projects from the candidate. Write the salutation, "
         "every paragraph and the closing in the SAME language as the job "
         "posting (Czech or English).\n\n"
-        "JOB:\n" + _dump(job) + "\n\n"
+        "JOB:\n" + _dump_job(job) + "\n\n"
         "CANDIDATE:\n" + _dump(candidate) + "\n\n"
         "USER ANSWERS:\n" + _dump(answers)
     )
@@ -323,7 +356,7 @@ def interview_questions_user_prompt(
         "process and culture categories. Write the question, why_asked and "
         "suggested_answer in the SAME language as the job posting (Czech or "
         "English). The category enum stays in English ('technical' etc.).\n\n"
-        "JOB:\n" + _dump(job) + "\n\n"
+        "JOB:\n" + _dump_job(job) + "\n\n"
         "CANDIDATE:\n" + _dump(candidate)
     )
 
@@ -338,7 +371,7 @@ def skill_gap_user_prompt(match_report: MatchReport, job: JobPosting) -> str:
         "learning_path entries and suggested_project in the SAME language as "
         "the job posting (Czech or English). Importance stays in English.\n\n"
         "MATCH REPORT:\n" + _dump(match_report) + "\n\n"
-        "JOB:\n" + _dump(job)
+        "JOB:\n" + _dump_job(job)
     )
 
 
