@@ -71,6 +71,12 @@ def _radio_choice_to_treat(text: str) -> str:
 
 
 class _QuestionWidget(QFrame):
+    # Emitted whenever the user makes a change that could flip the
+    # "answered" status (radio toggle, checkbox toggle, text edit). The
+    # parent dialog wires this to its `Continue` button gate so the OK
+    # action stays disabled until every question has a non-empty answer.
+    answer_changed_signal_name = "answer_changed"
+
     def __init__(self, question: ClarifyingQuestion) -> None:
         super().__init__()
         self.question = question
@@ -109,6 +115,8 @@ class _QuestionWidget(QFrame):
         self._other_check: QCheckBox | None = None
         self._other_input: QLineEdit | None = None
         self._mode: str = "text"
+        # Subscribers (the parent dialog) get notified on every change.
+        self._on_change_callbacks: list = []
 
         if question.answer_type in {"single_choice", "yes_no"} and question.options:
             self._mode = "radio"
@@ -117,13 +125,16 @@ class _QuestionWidget(QFrame):
                 radio = QRadioButton(option)
                 self._radio_group.addButton(radio, id=i)
                 self._radio_options.append(radio)
+                radio.toggled.connect(self._fire_change)
                 layout.addWidget(radio)
             self._other_radio = QRadioButton(t("questions.other"))
             self._radio_group.addButton(self._other_radio, id=len(question.options))
+            self._other_radio.toggled.connect(self._fire_change)
             layout.addWidget(self._other_radio)
             self._other_input = QLineEdit()
             self._other_input.setPlaceholderText(t("questions.other_placeholder"))
             self._other_input.setEnabled(False)
+            self._other_input.textChanged.connect(self._fire_change)
             self._other_radio.toggled.connect(self._other_input.setEnabled)
             self._other_radio.toggled.connect(
                 lambda checked: checked and self._other_input.setFocus()
@@ -133,13 +144,16 @@ class _QuestionWidget(QFrame):
             self._mode = "multi"
             for option in question.options:
                 cb = QCheckBox(option)
+                cb.toggled.connect(self._fire_change)
                 self._check_options.append(cb)
                 layout.addWidget(cb)
             self._other_check = QCheckBox(t("questions.other"))
+            self._other_check.toggled.connect(self._fire_change)
             layout.addWidget(self._other_check)
             self._other_input = QLineEdit()
             self._other_input.setPlaceholderText(t("questions.other_placeholder"))
             self._other_input.setEnabled(False)
+            self._other_input.textChanged.connect(self._fire_change)
             self._other_check.toggled.connect(self._other_input.setEnabled)
             self._other_check.toggled.connect(
                 lambda checked: checked and self._other_input.setFocus()
@@ -149,6 +163,7 @@ class _QuestionWidget(QFrame):
             self._mode = "text"
             self._line_input = QLineEdit()
             self._line_input.setPlaceholderText(t("questions.short_text_placeholder"))
+            self._line_input.textChanged.connect(self._fire_change)
             layout.addWidget(self._line_input)
 
     def value(self) -> tuple[str, str]:
@@ -178,6 +193,28 @@ class _QuestionWidget(QFrame):
             text = self._line_input.text().strip()
             return text, "practical_experience" if text else "omit"
         return "", "omit"
+
+    def is_answered(self) -> bool:
+        """Return True when the user has provided a non-empty answer.
+
+        For radio / multi questions this is satisfied when at least one
+        option (including "Other" with a non-empty text) is selected. For
+        free-text questions any non-blank text counts.
+        """
+        text, _ = self.value()
+        return bool(text)
+
+    def on_change(self, callback) -> None:
+        """Register a parent callback to fire on every answer change."""
+        if callback not in self._on_change_callbacks:
+            self._on_change_callbacks.append(callback)
+
+    def _fire_change(self, *_args) -> None:
+        for cb in self._on_change_callbacks:
+            try:
+                cb()
+            except Exception:  # pragma: no cover - parent must be defensive
+                pass
 
 
 class QuestionsDialog(QDialog):
@@ -224,6 +261,7 @@ class QuestionsDialog(QDialog):
         else:
             for q in questions:
                 qw = _QuestionWidget(q)
+                qw.on_change(self._refresh_continue_state)
                 self._question_widgets.append(qw)
                 host_layout.addWidget(qw)
         host_layout.addStretch(1)
@@ -232,11 +270,11 @@ class QuestionsDialog(QDialog):
         buttons = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel
         )
-        ok_btn = buttons.button(QDialogButtonBox.Ok)
-        ok_btn.setText(t("questions.continue"))
-        ok_btn.setProperty("variant", "primary")
-        ok_btn.style().unpolish(ok_btn)
-        ok_btn.style().polish(ok_btn)
+        self._ok_btn = buttons.button(QDialogButtonBox.Ok)
+        self._ok_btn.setText(t("questions.continue"))
+        self._ok_btn.setProperty("variant", "primary")
+        self._ok_btn.style().unpolish(self._ok_btn)
+        self._ok_btn.style().polish(self._ok_btn)
         cancel_btn = buttons.button(QDialogButtonBox.Cancel)
         cancel_btn.setText(t("questions.cancel"))
         cancel_btn.setProperty("variant", "ghost")
@@ -245,6 +283,20 @@ class QuestionsDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         outer.addWidget(buttons, alignment=Qt.AlignRight)
+
+        # Initial gate: if the dialog opened with questions still
+        # unanswered, the Continue button stays disabled until the user
+        # has answered every one of them.
+        self._refresh_continue_state()
+
+    def _refresh_continue_state(self) -> None:
+        """Enable Continue only when every question has a non-empty answer."""
+        all_answered = all(qw.is_answered() for qw in self._question_widgets)
+        self._ok_btn.setEnabled(all_answered)
+        if all_answered:
+            self._ok_btn.setToolTip("")
+        else:
+            self._ok_btn.setToolTip(t("questions.continue.disabled_tip"))
 
     def answers(self) -> AnswersBundle:
         return AnswersBundle(

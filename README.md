@@ -30,7 +30,7 @@ ApplyPilot AI is a Python desktop GenAI application that turns a job posting URL
 9. [Installation](#installation)
 10. [Running the app](#running-the-app)
 11. [Configuring `.env`](#configuring-env)
-12. [Cost per analysis](#cost-per-analysis)
+12. [Cost per analysis](#cost-per-analysis-measured)
 13. [Languages](#languages)
 14. [Workflow walkthrough](#workflow-walkthrough)
 15. [Project structure](#project-structure)
@@ -205,6 +205,15 @@ pip install -r requirements.txt
 
 Tested on Python **3.11**, **3.12** and **3.13**.
 
+### Optional: SPA renderer for Microsoft / Workday / Greenhouse
+
+`pip install -r requirements.txt` already pulls in the [Playwright Python](https://playwright.dev/python/) bindings, but it does **not** download any browser binaries. The renderer first tries to drive your existing Chrome (`channel="chrome"`) and Edge (`channel="msedge"`) installs - those exist on virtually every Windows 10/11 box, so the *Wrong content* button works out of the box. If neither is present (e.g. minimal Linux container), grab a Playwright-managed browser once with:
+
+```bash
+playwright install chromium       # ~140 MB, recommended
+# playwright install firefox      # alternative if Chromium is unavailable
+```
+
 ## Running the app
 
 ```bash
@@ -240,19 +249,63 @@ AI_MODEL=gpt-4o-mini
 
 > **GitHub:** paste your **profile URL** (`https://github.com/your-username`) into the Setup page and the app fetches your public repositories from the GitHub REST API. Optionally set `GITHUB_TOKEN` in `.env` to lift the rate limit from 60 req/h (anonymous) to 5000 req/h. Tick *Skip GitHub* in the Setup card if you don't want any network call to github.com.
 
-## Cost per analysis
+## Cost per analysis (measured)
 
-Demo / FakeAIProvider mode is always **$0** - no network calls. With a real provider, one full *Run analysis + Generate documents* pipeline triggers seven AI calls (analyze_job, analyze_candidate, generate_match_report, generate_resume, generate_cover_letter, generate_interview_questions, generate_skill_gap_plan), with two more calls if clarifying questions are needed (generate_clarifying_questions + recompute match_report). Per-call inputs are capped at ~12 KB by `_trim()` in `src/ai/prompts.py`, so the worst case totals ~30 000 input + ~8 000 output tokens.
+Demo / FakeAIProvider mode is always **$0** - no network calls. With a real provider, one full *Run analysis + Generate documents* pipeline triggers seven AI calls (analyze_job, analyze_candidate, generate_match_report, generate_resume, generate_cover_letter, generate_interview_questions, generate_skill_gap_plan), with two more calls if clarifying questions are needed (generate_clarifying_questions + a recomputed match_report). The numbers below were captured from a single end-to-end run against **`gpt-5.4-mini`** (the default OpenAI mini model in 2026, priced at **$0.75 / $4.50 per 1M input/output tokens** - cached inputs drop to $0.075 / 1M).
 
-| Provider / model | Run analysis only | Run + Generate (full) | Worst case w/ clarifying |
-| --- | --- | --- | --- |
-| **fake provider** (default) | **$0** | **$0** | **$0** |
-| **gpt-4o-mini** ($0.15 / $0.60 per 1M) | ~$0.004 (~0.10 Kc) | ~$0.008 (~0.20 Kc) | ~$0.011 (~0.27 Kc) |
-| gpt-4o ($2.50 / $10) | ~$0.06 (~1.50 Kc) | ~$0.13 (~3.10 Kc) | ~$0.16 (~4 Kc) |
-| Mistral small ($0.20 / $0.60) | ~$0.005 (~0.12 Kc) | ~$0.011 (~0.27 Kc) | ~$0.014 (~0.34 Kc) |
-| Groq llama-3.3-70b free tier | $0 | $0 | $0 |
+### Per-call breakdown (one full pipeline, 9 calls including clarifying questions)
 
-Real-world figures are typically **30-50 % lower** because most CVs / job descriptions are shorter than the 12 KB cap. Set `AI_REQUEST_LOG=true` in `.env` and the app logs every real API call to `logs/ai_requests.log` so you can audit costs after the fact.
+| Step | Prompt tokens | Completion tokens |
+| --- | ---: | ---: |
+| `analyze_job` | 1,474 | 931 |
+| `analyze_candidate` | 15,223 | 14,591 |
+| `match_report` (1st) | 21,441 | 1,194 |
+| `clarifying_questions` | 17,310 | 560 |
+| `match_report` (recompute after answers) | 22,315 | 1,406 |
+| `resume` | 22,308 | 1,754 |
+| `cover_letter` | 17,574 | 340 |
+| `interview_questions` | 17,242 | 1,487 |
+| `skill_gap_plan` | 3,064 | 827 |
+| **Total** | **137,951** | **23,090** |
+
+### Cost per application
+
+```
+137,951 input  x  $0.75 / 1M  =  $0.1035
+ 23,090 output x  $4.50 / 1M  =  $0.1039
+                              ---------------
+                       Total ≈  $0.21  (~5 Kc)
+```
+
+Effective blended price is ~**$1.30 per 1M mixed tokens** at this 85% input / 15% output ratio. One million tokens is therefore roughly six full applications.
+
+### Monthly extrapolation (gpt-5.4-mini)
+
+| Apps / month | Input tokens | Output tokens | Cost |
+| --- | ---: | ---: | ---: |
+| 10 | ~1.38 M | ~0.23 M | **~$2.07** (~50 Kc) |
+| 30 | ~4.14 M | ~0.69 M | **~$6.21** (~145 Kc) |
+| 100 | ~13.8 M | ~2.31 M | **~$20.70** (~485 Kc) |
+| 300 | ~41.4 M | ~6.93 M | **~$62.10** (~1,455 Kc) |
+
+### Other providers / fallbacks
+
+| Provider / model | One full application | Worst-case prompt cap (~30k in / ~8k out) |
+| --- | --- | --- |
+| **fake provider** (default) | **$0** | **$0** |
+| **gpt-5.4-mini** ($0.75 / $4.50) | ~$0.21 (~5 Kc) | ~$0.06 (~1.50 Kc) |
+| gpt-4o-mini ($0.15 / $0.60) | ~$0.035 (~0.85 Kc) | ~$0.009 (~0.22 Kc) |
+| gpt-4o ($2.50 / $10.00) | ~$0.58 (~13.5 Kc) | ~$0.16 (~3.85 Kc) |
+| Mistral small ($0.20 / $0.60) | ~$0.041 (~0.95 Kc) | ~$0.011 (~0.27 Kc) |
+| Groq llama-3.3-70b free tier | **$0** | **$0** |
+
+> **Why is the worst case lower than the measured run?** The `_trim()` cap in [`src/ai/prompts.py`](src/ai/prompts.py) limits each *single* prompt to ~12 KB, but the full pipeline issues nine prompts and the candidate summary produced by `analyze_candidate` is fed into every downstream call - so totals above the per-prompt cap are normal in practice.
+
+### Optimisation note (roadmap)
+
+`analyze_candidate` produced **14,591 output tokens** in this run, and that summary becomes the input of `match_report`, `resume`, `cover_letter` and `interview_questions` (which is why their prompts come out at 17-22k tokens each). Trimming this summary - especially **omitting `readme_excerpt` from GitHub projects** - is expected to shave **~10-15%** off the total token bill without losing signal. Tracked under [Roadmap](#roadmap).
+
+Set `AI_REQUEST_LOG=true` in `.env` and the app logs every real API call (with prompt/completion token counts) to `logs/ai_requests.log` so you can audit your own per-application cost after the fact.
 
 ## Languages
 
@@ -359,7 +412,7 @@ The test suite is hermetic. An autouse pytest fixture replaces `requests.post` w
 
 ## Limitations
 
-- **JavaScript-heavy job sites** (LinkedIn job posts, some ATS pages) may not render via `trafilatura` / `requests`. The app falls back to a manual paste box. A Playwright renderer is on the roadmap; the fetcher already exposes `register_renderer()` so you can plug it in.
+- **JavaScript-heavy job sites** (LinkedIn job posts, some ATS pages, Microsoft Careers, Workday) ship the description via JavaScript, so the static `trafilatura` / `requests` strategies see only the SPA bootstrap JSON. The fetcher detects this and the *Wrong content* button (next to *Fetch* on the setup screen) escalates to a headless system-browser render via Playwright (Chrome / Edge / Firefox - whichever is installed). If even that fails the manual paste box is offered as the final fallback.
 - **PDF resumes that are scanned images** cannot be parsed (no OCR yet).
 - **Demo mode is deterministic, not magical.** It produces realistic placeholder content but cannot reason about your CV the way an LLM can. Czech CV / job text propagates through unchanged in evidence previews, but generated bullets, summaries and cover letters stay in English. Switch to a real provider for full bilingual generation.
 - **Modern Resume preview quality** depends on your PySide6 install. With `PySide6-Addons` (the default `PySide6` metapackage) the tab renders in Chromium-based `QtWebEngine` for pixel-perfect layout. Without it the tab degrades to `QTextBrowser` which only supports a CSS subset - use *Open in browser* for the full styled output.
@@ -367,7 +420,8 @@ The test suite is hermetic. An autouse pytest fixture replaces `requests.post` w
 
 ## Roadmap
 
-- [ ] Optional Playwright renderer for JS-heavy job pages.
+- [x] **Playwright system-browser fallback** for SPA career sites (Microsoft, Workday, Greenhouse). Implemented in [`src/services/playwright_renderer.py`](src/services/playwright_renderer.py); `fetch_job_text(..., use_renderer=True)` (wired to the *Wrong content* button) drives the user's existing Chrome / Edge / Firefox via Playwright channels, so `playwright install` is only needed if none of those browsers is present.
+- [ ] **Trim `analyze_candidate` output** (~10-15% cost reduction): cap the structured summary, drop `readme_excerpt` from GitHub project rows, and let the downstream calls re-fetch the relevant slice on demand. See [Cost per analysis](#cost-per-analysis-measured).
 - [ ] OCR fallback for scanned PDF resumes (Tesseract).
 - [ ] Local vector store for cross-application evidence search.
 - [ ] Browser extension that sends the current LinkedIn job URL to the desktop app.

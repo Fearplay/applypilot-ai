@@ -10,6 +10,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QThreadPool
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMessageBox,
+    QScrollArea,
     QStackedWidget,
     QStatusBar,
     QVBoxLayout,
@@ -54,6 +56,7 @@ from ..services.profile_dedup import (
 from ..services.question_generator import generate_questions
 from ..services.resume_generator import generate_tailored_resume
 from ..utils.preferences import set_preference
+from ..utils.restart import restart_app
 from .documents_page import DocumentsPage
 from .history_page import HistoryPage
 from .match_report_page import MatchReportPage
@@ -182,6 +185,121 @@ class SettingsDialog(QDialog):
         os.environ["AI_API_KEY"] = self._api_key.text().strip()
         os.environ["AI_MODEL"] = self._model.text().strip()
         return load_settings()
+
+
+# ---------------------------------------------------------------------------
+# Pre-deletion confirmation dialog
+# ---------------------------------------------------------------------------
+@dataclass
+class _RemovalCandidate:
+    """Single row the user is about to drop from the tailored resume."""
+
+    entry_id: str
+    section: str  # one of dedup.confirm.section.* keys (without the prefix)
+    label: str
+    reason: str
+
+
+class SectionRemovalConfirmDialog(QDialog):
+    """Modal that lists rows the user already marked as 'skip'.
+
+    Shown right before document generation so the user gets a final
+    "are you SURE you want to remove these?" loop. Each row is rendered
+    with a *Keep this entry* checkbox defaulting to **checked**, i.e. the
+    safe default keeps the row. Unchecking the box keeps it on the
+    exclusion list.
+    """
+
+    def __init__(
+        self,
+        candidates: list[_RemovalCandidate],
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(t("dedup.confirm.title"))
+        self.setModal(True)
+        self.setMinimumWidth(640)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
+
+        title = QLabel(t("dedup.confirm.title"))
+        title.setStyleSheet(
+            f"color: {Tokens.text}; font-size: 17px; font-weight: 600;"
+        )
+        layout.addWidget(title)
+
+        body = QLabel(t("dedup.confirm.body"))
+        body.setWordWrap(True)
+        body.setStyleSheet(f"color: {Tokens.text_muted}; font-size: 12px;")
+        layout.addWidget(body)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        host = QWidget()
+        host_layout = QVBoxLayout(host)
+        host_layout.setContentsMargins(0, 0, 0, 0)
+        host_layout.setSpacing(10)
+        scroll.setWidget(host)
+        layout.addWidget(scroll, stretch=1)
+
+        self._checkboxes: dict[str, QCheckBox] = {}
+
+        # Group candidates by section so the user has a clean overview.
+        groups: dict[str, list[_RemovalCandidate]] = {}
+        for cand in candidates:
+            groups.setdefault(cand.section, []).append(cand)
+
+        for section, items in groups.items():
+            header = QLabel(t(f"dedup.confirm.section.{section}"))
+            header.setStyleSheet(
+                f"color: {Tokens.text}; font-size: 13px; font-weight: 600; "
+                "padding-top: 6px;"
+            )
+            host_layout.addWidget(header)
+            for cand in items:
+                row = QFrame()
+                row.setStyleSheet(
+                    f"QFrame {{ background-color: {Tokens.surface_alt}; "
+                    f"border: 1px solid {Tokens.border}; border-radius: 8px; "
+                    "padding: 8px 10px; }}"
+                )
+                row_layout = QVBoxLayout(row)
+                row_layout.setContentsMargins(10, 8, 10, 8)
+                row_layout.setSpacing(4)
+                cb = QCheckBox(f"{t('dedup.confirm.keep')} - {cand.label}")
+                cb.setChecked(True)
+                cb.setStyleSheet(
+                    f"QCheckBox {{ color: {Tokens.text}; font-size: 13px; }}"
+                )
+                self._checkboxes[cand.entry_id] = cb
+                row_layout.addWidget(cb)
+                reason = QLabel(t("dedup.confirm.reason", reason=cand.reason))
+                reason.setWordWrap(True)
+                reason.setStyleSheet(
+                    f"color: {Tokens.text_muted}; font-size: 11px; "
+                    "padding-left: 22px; font-style: italic;"
+                )
+                row_layout.addWidget(reason)
+                host_layout.addWidget(row)
+
+        host_layout.addStretch(1)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+        )
+        buttons.button(QDialogButtonBox.Ok).setText(t("dedup.confirm.continue"))
+        buttons.button(QDialogButtonBox.Ok).setProperty("variant", "primary")
+        buttons.button(QDialogButtonBox.Cancel).setText(t("dedup.confirm.cancel"))
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons, alignment=Qt.AlignRight)
+
+    def kept_ids(self) -> set[str]:
+        """Return the set of entry ids the user un-checked, i.e. wants to KEEP."""
+        return {eid for eid, cb in self._checkboxes.items() if cb.isChecked()}
 
 
 # ---------------------------------------------------------------------------
@@ -374,9 +492,30 @@ class MainWindow(QMainWindow):
             set_preference("ui_language", code)
         except Exception:
             logger.warning("Could not persist UI language", exc_info=True)
-        QMessageBox.information(
-            self, t("lang_change.title"), t("lang_change.body")
-        )
+        # Offer to restart immediately so menus, prompts and dialogs all
+        # pick up the new locale. The live-retranslate path stays as a
+        # soft fallback when the user picks "later".
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Question)
+        box.setWindowTitle(t("restart.title"))
+        box.setText(t("restart.body"))
+        now_btn = box.addButton(t("restart.now"), QMessageBox.AcceptRole)
+        later_btn = box.addButton(t("restart.later"), QMessageBox.RejectRole)
+        box.setDefaultButton(now_btn)
+        box.exec()
+        if box.clickedButton() is now_btn:
+            try:
+                restart_app()
+            except Exception:  # pragma: no cover - best-effort restart only
+                logger.exception("Auto-restart failed; staying in current process")
+                QMessageBox.information(
+                    self, t("lang_change.title"), t("lang_change.body")
+                )
+        elif box.clickedButton() is later_btn:
+            # Soft fallback - menus and visible widgets retranslate live but
+            # some dialogs (e.g. modal QuestionsDialog already on screen)
+            # cannot retroactively update.
+            self.statusBar().showMessage(t("lang_change.body"), 7000)
 
     def _on_language_changed(self, code: str) -> None:
         """Live retranslate everything we can without rebuilding pages."""
@@ -507,6 +646,12 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage(t("status.generating_questions"))
         self._sidebar.set_activity(t("status.generating_questions"))
+        # Block "Run analysis" while the AI prepares clarifying questions
+        # to prevent the user from queueing a second pipeline run on top
+        # of the in-flight one.
+        self._setup_page.set_analysis_blocked(
+            t("setup.status.blocked.generating_questions")
+        )
 
         def work():
             return generate_questions(
@@ -523,8 +668,14 @@ class MainWindow(QMainWindow):
         self.statusBar().clearMessage()
         self._state.pending_questions = questions
         if not questions:
+            self._setup_page.set_analysis_blocked(None)
             self._show_match_report()
             return
+        # Keep the run button gated while the modal is open so a stray
+        # click on the underlying setup page doesn't start a parallel run.
+        self._setup_page.set_analysis_blocked(
+            t("setup.status.blocked.questions_pending")
+        )
         dlg = QuestionsDialog(questions, parent=self)
         if dlg.exec() == QDialog.Accepted:
             self._state.answers = dlg.answers()
@@ -536,6 +687,7 @@ class MainWindow(QMainWindow):
             )
             self._start_match_after_answers()
         else:
+            self._setup_page.set_analysis_blocked(None)
             self._show_match_report()
 
     def _start_match_after_answers(self) -> None:
@@ -547,6 +699,9 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage(t("status.recomputing_match"))
         self._sidebar.set_activity(t("status.recomputing_match_short"))
+        self._setup_page.set_analysis_blocked(
+            t("setup.status.blocked.recomputing")
+        )
 
         def work():
             return compute_match(
@@ -564,6 +719,7 @@ class MainWindow(QMainWindow):
         self._state.match_report = report
         self._state.evidence = evidence
         self.statusBar().clearMessage()
+        self._setup_page.set_analysis_blocked(None)
         self._show_match_report()
 
     def _show_match_report(self) -> None:
@@ -574,6 +730,8 @@ class MainWindow(QMainWindow):
         self._sidebar.set_activity(
             t("status.match_score", score=self._state.match_report.overall_score)
         )
+        # Match is on screen, the user can now safely re-run analysis.
+        self._setup_page.set_analysis_blocked(None)
         self._goto("match")
 
     def _start_document_generation(self) -> None:
@@ -593,6 +751,13 @@ class MainWindow(QMainWindow):
             return
         docs_lang = dlg.selected_language()
         self._state.docs_language = docs_lang
+
+        # Last-chance modal: list every experience/education/certification/
+        # course row currently scheduled for removal so the user can rescue
+        # any they want to keep before we burn AI tokens. Cancelling here
+        # aborts the whole document generation step.
+        if not self._confirm_section_removals(candidate):
+            return
 
         # Drop experience / education rows the user marked as 'No - skip it'
         # in the discrepancy questions. The original profile remains on
@@ -626,6 +791,92 @@ class MainWindow(QMainWindow):
             on_finished=self._on_documents_done,
             on_failed=self._on_workflow_failed,
         )
+
+    def _confirm_section_removals(self, candidate: CandidateProfile) -> bool:
+        """Show a confirmation modal listing rows about to be removed.
+
+        Returns ``True`` if the user wants to proceed with document
+        generation (regardless of which rows they kept) and ``False`` if
+        they cancelled. Side effect: mutates
+        ``self._state.excluded_entry_ids`` to drop any ids the user opted
+        to keep, so the eventual ``filter_profile_entries`` call sees the
+        final exclusion set.
+
+        When the exclusion set is empty (and no AI-suggested removals have
+        been collected) we skip the dialog entirely and return ``True``.
+        """
+        excluded_ids = self._state.excluded_entry_ids
+        if not excluded_ids:
+            return True
+
+        candidates: list[_RemovalCandidate] = []
+
+        # Map answers back to question ids so we can show the user *why*
+        # a row is on the chopping block.
+        answer_lookup: dict[str, str] = {
+            a.question_id.split("discrepancy:", 1)[-1]: (a.answer or "")
+            for a in self._state.answers.answers
+            if a.question_id.startswith("discrepancy:")
+            and not a.question_id.startswith("discrepancy:date:")
+        }
+
+        for entry in candidate.experience:
+            if not entry.id or entry.id not in excluded_ids:
+                continue
+            label_bits = [entry.title or "Role"]
+            if entry.company:
+                label_bits.append(f"@ {entry.company}")
+            if entry.period:
+                label_bits.append(f"({entry.period})")
+            label = " ".join(label_bits)
+            reason = answer_lookup.get(entry.id) or t(
+                "dedup.confirm.reason.single_source"
+            )
+            candidates.append(
+                _RemovalCandidate(
+                    entry_id=entry.id,
+                    section="experience",
+                    label=label,
+                    reason=reason,
+                )
+            )
+
+        for entry in candidate.education:
+            if not entry.id or entry.id not in excluded_ids:
+                continue
+            label_bits = [entry.degree or "Studies"]
+            if entry.institution:
+                label_bits.append(f"@ {entry.institution}")
+            if entry.period:
+                label_bits.append(f"({entry.period})")
+            label = " ".join(label_bits)
+            reason = answer_lookup.get(entry.id) or t(
+                "dedup.confirm.reason.single_source"
+            )
+            candidates.append(
+                _RemovalCandidate(
+                    entry_id=entry.id,
+                    section="education",
+                    label=label,
+                    reason=reason,
+                )
+            )
+
+        if not candidates:
+            return True
+
+        dlg = SectionRemovalConfirmDialog(candidates, parent=self)
+        result = dlg.exec()
+        if result != QDialog.Accepted:
+            return False
+        kept_ids = dlg.kept_ids()
+        # Anything the user explicitly KEPT (checkbox stayed checked) drops
+        # off the exclusion list - but anything they unchecked stays on it.
+        if kept_ids:
+            self._state.excluded_entry_ids = (
+                self._state.excluded_entry_ids - kept_ids
+            )
+        return True
 
     def _on_documents_done(self, result) -> None:
         resume, cover, interview, gaps = result
@@ -715,6 +966,10 @@ class MainWindow(QMainWindow):
     def _on_workflow_failed(self, message: str) -> None:
         self.statusBar().clearMessage()
         self._sidebar.set_activity(t("status.workflow_error"))
+        # Make sure the Run analysis button always recovers when the
+        # background pipeline crashes; otherwise the user is stranded
+        # with a permanently disabled primary action.
+        self._setup_page.set_analysis_blocked(None)
         QMessageBox.critical(self, t("status.workflow_error"), message)
 
 

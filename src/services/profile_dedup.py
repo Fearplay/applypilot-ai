@@ -2,23 +2,26 @@
 
 Even with the new prompt rules in [src/ai/prompts.py](src/ai/prompts.py)
 the AI sometimes still emits the same role / study twice when the CV and
-LinkedIn export describe it in different languages. This module runs a
-cheap Python-side dedup over the merged :class:`CandidateProfile` and also
-generates clarifying questions whenever a fact appears in only one source.
+LinkedIn export describe it in different languages or with different dates.
+This module runs a cheap Python-side dedup over the merged
+:class:`CandidateProfile` and also generates clarifying questions whenever a
+fact appears in only one source or the two sources disagree on a date.
 
-The two public entry points are:
+Public entry points:
 
 * :func:`dedup_profile` - mutates / returns a profile with duplicate
   experience and education entries merged in place.
 * :func:`build_source_discrepancy_questions` - for every entry that exists
   in only ``cv`` or only ``linkedin``, returns a :class:`ClarifyingQuestion`
   asking the user whether to include it in the resume.
+* :func:`build_date_conflict_questions` - for every entry whose ``notes``
+  field carries a ``CV: ... | LinkedIn: ...`` date discrepancy, returns a
+  :class:`ClarifyingQuestion` asking the user which period is correct.
 
 The implementation is intentionally string-based and dependency-free: we
-strip diacritics, drop common legal suffixes / academic stop words, and
-compare 4-digit year ranges parsed out of the ``period`` field. That gives
-us robust grouping of "Czech University of Life Sciences Prague, 2021-2024"
-vs "ČZU v Praze, 2021-2023" without pulling in a fuzzy-matching library.
+strip diacritics, drop common legal suffixes / academic stop words, apply a
+small Czech<->English token map (``prague`` <-> ``praha`` etc.) and compare
+4-digit year ranges parsed out of the ``period`` field.
 """
 from __future__ import annotations
 
@@ -27,6 +30,7 @@ import re
 import unicodedata
 from collections.abc import Iterable
 
+from ..i18n import t
 from ..models.candidate import (
     CandidateProfile,
     EducationEntry,
@@ -66,11 +70,48 @@ _STOP_TOKENS: frozenset[str] = frozenset({
     "skola",  # ASCII fallback for "škola"
     "vysoka",
     "stredni",
+    # Articles / prepositions that survive in either language and add noise.
     "of",
     "the",
     "a",
     "an",
+    "and",
+    "v",   # Czech preposition for "in" (e.g. "ČZU v Praze")
+    "ve",
+    "i",   # Czech "and"
+    "se",
+    "in",
+    "at",
 })
+
+# Cross-language token equivalences. Applied AFTER tokenization so we don't
+# disturb the legal-suffix / stop-word logic. The key is the input token
+# (already lowercased & diacritic-stripped), the value is the canonical form
+# we use for comparison. Add new entries narrowly - false positives here
+# silently merge unrelated rows.
+_TOKEN_EQUIVALENCES: dict[str, str] = {
+    # Place names (CZ <-> EN)
+    "praha": "praha",
+    "praze": "praha",
+    "prague": "praha",
+    "prag": "praha",
+    "brno": "brno",
+    "ostrava": "ostrava",
+    "plzen": "plzen",
+    "pilsen": "plzen",
+    "republiky": "cz",
+    "republika": "cz",
+    "republic": "cz",
+    "ceska": "cz",
+    "ceske": "cz",
+    "cesky": "cz",
+    "cesko": "cz",
+    "czech": "cz",
+    "czechia": "cz",
+    "ceskoslovenska": "cz",
+    "ceskoslovenske": "cz",
+    "ceskoslovenske,": "cz",
+}
 
 
 def _strip_diacritics(text: str) -> str:
@@ -80,14 +121,27 @@ def _strip_diacritics(text: str) -> str:
 
 
 def _normalize_name(text: str) -> str:
-    """Lowercase, drop diacritics, strip legal suffixes / academic stop words."""
+    """Lowercase, drop diacritics, strip legal suffixes / academic stop words.
+
+    Also collapses brand-parenthetical lists ("Trust Based Solutions (Norton
+    · Avast · ...)") and applies the cross-language token map so place
+    names and country adjectives match across CZ/EN spellings.
+    """
     if not text:
         return ""
     cleaned = _strip_diacritics(text).lower()
     for pat in _LEGAL_SUFFIX_PATTERNS:
         cleaned = re.sub(pat, " ", cleaned)
-    cleaned = re.sub(r"[\.,/\\\(\)\[\]\-_]", " ", cleaned)
-    tokens = [tok for tok in cleaned.split() if tok and tok not in _STOP_TOKENS]
+    # Bullets / interpuncts and parens are common in LinkedIn/CV strings;
+    # treat them as plain word boundaries so "Gen Digital · Trust ..." has
+    # the same tokenisation as "Gen Digital, Trust ...".
+    cleaned = re.sub(r"[\.,/\\\(\)\[\]\-_·•]", " ", cleaned)
+    raw_tokens = [tok for tok in cleaned.split() if tok]
+    tokens: list[str] = []
+    for tok in raw_tokens:
+        if tok in _STOP_TOKENS:
+            continue
+        tokens.append(_TOKEN_EQUIVALENCES.get(tok, tok))
     return " ".join(tokens)
 
 
@@ -127,26 +181,101 @@ def _ranges_overlap(a: tuple[int, int] | None, b: tuple[int, int] | None) -> boo
 
 
 def _names_match(a: str, b: str) -> bool:
-    """Heuristic match: full normalized equality OR mutual substring."""
+    """Heuristic match: full normalized equality OR mutual substring OR
+    >= 0.4 token overlap (smaller-coverage) with at least TWO shared tokens.
+
+    Lowered the smaller-coverage threshold from 0.5 to 0.4 in the
+    cost-analysis-and-ux-overhaul pass so single-word variations like "Gen"
+    vs "Gen Digital · Trust Based Solutions ..." merge even when the long
+    variant brings many extra brand parentheticals - though that case is
+    actually caught by the substring rule above.
+
+    The "at least two shared tokens" guard prevents false positives where
+    two unrelated organisations share a single common token that survives
+    normalisation (e.g. two real Prague universities both having "praha"
+    after place-name equivalence).
+    """
     na, nb = _normalize_name(a), _normalize_name(b)
     if not na or not nb:
         return False
     if na == nb:
         return True
     if na in nb or nb in na:
-        # Catches "ceska zemedelska v praze" inside the longer English name.
+        # Catches "ceska zemedelska v praze" inside the longer English name
+        # and "gen" inside "gen digital trust based solutions".
         return True
-    # Token-set similarity: at least half of the shorter token set sits in
-    # the longer one. Calibrated so 'ČZU Prague' merges with 'Provozně
-    # ekonomická fakulta ČZU v Praze' (1/2 shared after stop-word removal)
-    # but 'MIT' and 'Stanford' still stay separate.
     tokens_a = set(na.split())
     tokens_b = set(nb.split())
     if not tokens_a or not tokens_b:
         return False
-    smaller, larger = (tokens_a, tokens_b) if len(tokens_a) <= len(tokens_b) else (tokens_b, tokens_a)
+    smaller, larger = (
+        (tokens_a, tokens_b) if len(tokens_a) <= len(tokens_b) else (tokens_b, tokens_a)
+    )
     overlap = len(smaller & larger)
-    return overlap / len(smaller) >= 0.5
+    if overlap < 2:
+        # A single shared generic token (e.g. just "praha") is not enough
+        # signal to merge two genuinely distinct organisations.
+        return False
+    return overlap / len(smaller) >= 0.4
+
+
+# ---------------------------------------------------------------------------
+# Date-conflict notes helpers
+# ---------------------------------------------------------------------------
+
+# Pattern used both when WRITING the conflict note (in :func:`_merge_*`) and
+# when READING it back in :func:`build_date_conflict_questions`. Keep them
+# in sync - the test suite asserts a round trip.
+_DATE_CONFLICT_RE = re.compile(
+    r"CV:\s*(?P<cv>[^|]+?)\s*\|\s*LinkedIn:\s*(?P<linkedin>[^|]+?)(?:\s*\||$)",
+    re.IGNORECASE,
+)
+
+
+def _format_date_conflict_note(cv_period: str, linkedin_period: str) -> str:
+    return f"CV: {cv_period.strip()} | LinkedIn: {linkedin_period.strip()}"
+
+
+def _append_note(existing: str | None, addition: str) -> str:
+    """Append ``addition`` to ``existing`` notes without duplicating it.
+
+    We use ``" | "`` as the joiner so the AI's pre-existing notes (which
+    already follow the same convention) are preserved verbatim.
+    """
+    if not existing:
+        return addition
+    if addition in existing:
+        return existing
+    return f"{existing} | {addition}"
+
+
+def _detect_date_conflict(
+    a_period: str,
+    b_period: str,
+    a_source: EntrySource,
+    b_source: EntrySource,
+) -> tuple[str, str] | None:
+    """Return ``(cv_period, linkedin_period)`` when the two entries describe
+    the same role/study but disagree on dates, otherwise ``None``.
+
+    We deliberately surface the conflict only when one side is from the CV
+    and the other from LinkedIn - if both came from the same source, the
+    user already cross-checked the dates themselves.
+    """
+    if not a_period or not b_period:
+        return None
+    if a_period.strip() == b_period.strip():
+        return None
+    a_range = _parse_year_range(a_period)
+    b_range = _parse_year_range(b_period)
+    if a_range and b_range and a_range == b_range:
+        return None  # different wording, same years
+    sources = {a_source, b_source}
+    if not ({"cv", "linkedin"} <= sources):
+        return None
+    cv_period = a_period if a_source == "cv" else b_period
+    linkedin_period = a_period if a_source == "linkedin" else b_period
+    return cv_period, linkedin_period
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +293,6 @@ def _merge_source(left: EntrySource, right: EntrySource) -> EntrySource:
         return "cv"
     if pair == {"linkedin"}:
         return "linkedin"
-    # Any 'unknown' wins by the more specific value.
     pair.discard("unknown")
     if pair == {"cv"}:
         return "cv"
@@ -187,6 +315,14 @@ def _merge_experience(a: WorkExperience, b: WorkExperience) -> WorkExperience:
     employment_type = primary.employment_type
     if employment_type == "unknown" and secondary.employment_type != "unknown":
         employment_type = secondary.employment_type
+    notes = primary.notes or secondary.notes
+    if primary.notes and secondary.notes and primary.notes != secondary.notes:
+        notes = _append_note(primary.notes, secondary.notes)
+    conflict = _detect_date_conflict(
+        primary.period, secondary.period, primary.source, secondary.source
+    )
+    if conflict is not None:
+        notes = _append_note(notes, _format_date_conflict_note(*conflict))
     return primary.model_copy(update={
         "title": primary.title or secondary.title,
         "company": primary.company or secondary.company,
@@ -196,17 +332,24 @@ def _merge_experience(a: WorkExperience, b: WorkExperience) -> WorkExperience:
         "technologies": technologies,
         "employment_type": employment_type,
         "source": _merge_source(primary.source, secondary.source),
+        "notes": notes,
     })
 
 
 def _merge_education(a: EducationEntry, b: EducationEntry) -> EducationEntry:
     primary, secondary = (a, b) if len(a.degree or "") >= len(b.degree or "") else (b, a)
     notes_chunks = [n for n in (primary.notes, secondary.notes) if n]
+    notes = " | ".join(notes_chunks) if notes_chunks else None
+    conflict = _detect_date_conflict(
+        primary.period, secondary.period, primary.source, secondary.source
+    )
+    if conflict is not None:
+        notes = _append_note(notes, _format_date_conflict_note(*conflict))
     return primary.model_copy(update={
         "institution": primary.institution or secondary.institution,
         "degree": primary.degree or secondary.degree,
         "period": primary.period or secondary.period,
-        "notes": " | ".join(notes_chunks) if notes_chunks else None,
+        "notes": notes,
         "source": _merge_source(primary.source, secondary.source),
     })
 
@@ -272,7 +415,8 @@ def dedup_profile(profile: CandidateProfile) -> CandidateProfile:
     Mutates the model fields in place but also returns the profile for
     callers that prefer a fluent style. The merged entries keep the longer
     description, the union of bullets / technologies and the merged
-    ``source`` (mixed -> ``both``).
+    ``source`` (mixed -> ``both``). Date conflicts are persisted in the
+    entry's ``notes`` field for later question generation.
     """
     deduped_exp = _dedup_experience(list(profile.experience))
     deduped_edu = _dedup_education(list(profile.education))
@@ -324,24 +468,47 @@ def _source_question(
 ) -> ClarifyingQuestion:
     """Build a yes / no / other question about a single-source entry."""
     if source == "cv":
-        sentence = f"'{label}' is on your CV but not on your LinkedIn export."
+        question = t("dedup.q.cv_only", label=label)
+        why = t("dedup.why.cv_only")
     elif source == "linkedin":
-        sentence = f"'{label}' is on LinkedIn but not in your CV."
+        question = t("dedup.q.linkedin_only", label=label)
+        why = t("dedup.why.linkedin_only")
     else:
-        sentence = f"'{label}' was only found in one of your inputs."
+        # Defensive fallback - the caller shouldn't reach here for `both`/
+        # `unknown`, but if they do we surface a generic phrasing.
+        question = t("dedup.q.cv_only", label=label)
+        why = t("dedup.why.cv_only")
     return ClarifyingQuestion(
         id=qid,
         skill=skill,
-        question=sentence + " Should we include it in the resume?",
-        why_it_matters=(
-            "Including or skipping it changes the experience section. We want "
-            "to keep the resume honest and match what you actually want to "
-            "show."
-        ),
+        question=question,
+        why_it_matters=why,
         options=[
-            "Yes - include it",
-            "No - skip it",
+            t("dedup.opt.include"),
+            t("dedup.opt.skip"),
         ],
+        answer_type="single_choice",
+    )
+
+
+def _date_conflict_question(
+    *,
+    qid: str,
+    label: str,
+    cv_period: str,
+    linkedin_period: str,
+) -> ClarifyingQuestion:
+    return ClarifyingQuestion(
+        id=qid,
+        skill=None,
+        question=t(
+            "dedup.q.date_conflict",
+            label=label,
+            cv_period=cv_period,
+            linkedin_period=linkedin_period,
+        ),
+        why_it_matters=t("dedup.why.date_conflict"),
+        options=[cv_period, linkedin_period, t("dedup.opt.other_dates")],
         answer_type="single_choice",
     )
 
@@ -391,6 +558,64 @@ def build_source_discrepancy_questions(
     return questions[:max_questions]
 
 
+def build_date_conflict_questions(
+    profile: CandidateProfile,
+    *,
+    max_questions: int = 6,
+) -> list[ClarifyingQuestion]:
+    """Generate ``discrepancy:date:<entry_id>`` questions for merged entries
+    where the CV and LinkedIn dates disagree.
+
+    Reads the ``notes`` field of each ``experience`` and ``education`` row
+    looking for the canonical ``CV: ... | LinkedIn: ...`` pattern. The note
+    is written by :func:`_merge_experience` / :func:`_merge_education` and
+    can also be supplied by the AI directly (see
+    ``analyze_candidate_user_prompt``). Both sources funnel into the same
+    handler.
+    """
+    questions: list[ClarifyingQuestion] = []
+
+    for entry in profile.experience:
+        match = _DATE_CONFLICT_RE.search(entry.notes or "")
+        if match is None:
+            continue
+        cv_period = match.group("cv").strip()
+        linkedin_period = match.group("linkedin").strip()
+        if not cv_period or not linkedin_period:
+            continue
+        if cv_period == linkedin_period:
+            continue
+        questions.append(
+            _date_conflict_question(
+                qid=f"discrepancy:date:{entry.id or _format_experience_label(entry)}",
+                label=_format_experience_label(entry),
+                cv_period=cv_period,
+                linkedin_period=linkedin_period,
+            )
+        )
+
+    for entry in profile.education:
+        match = _DATE_CONFLICT_RE.search(entry.notes or "")
+        if match is None:
+            continue
+        cv_period = match.group("cv").strip()
+        linkedin_period = match.group("linkedin").strip()
+        if not cv_period or not linkedin_period:
+            continue
+        if cv_period == linkedin_period:
+            continue
+        questions.append(
+            _date_conflict_question(
+                qid=f"discrepancy:date:{entry.id or _format_education_label(entry)}",
+                label=_format_education_label(entry),
+                cv_period=cv_period,
+                linkedin_period=linkedin_period,
+            )
+        )
+
+    return questions[:max_questions]
+
+
 # ---------------------------------------------------------------------------
 # Excluded-entry helpers used by main_window before document generation
 # ---------------------------------------------------------------------------
@@ -401,17 +626,27 @@ def excluded_ids_from_answers(
     """Return the set of profile-entry ids the user said to skip.
 
     Looks for ``ClarifyingAnswer`` objects whose ``question_id`` starts with
-    ``discrepancy:`` and whose answer text starts with 'no' (case-insensitive,
-    strips whitespace - so "No - skip it" and "no" both qualify).
+    ``discrepancy:`` (but NOT ``discrepancy:date:``) and whose answer text
+    starts with 'no' / 'ne' (case-insensitive) - so "No - skip it" /
+    "Ne - vynechat" both qualify regardless of which UI language was active
+    when the user clicked. Date-conflict answers are NEVER an exclusion
+    signal: they pick which date is correct, not whether to keep the row.
     """
-    skip_prefixes = {"discrepancy:"}
     result: set[str] = set()
     for ans in answers or []:
         qid = getattr(ans, "question_id", "") or ""
-        if not any(qid.startswith(p) for p in skip_prefixes):
+        if not qid.startswith("discrepancy:"):
+            continue
+        if qid.startswith("discrepancy:date:"):
             continue
         text = (getattr(ans, "answer", "") or "").strip().lower()
-        if not text or text.startswith("no"):
+        if not text:
+            continue
+        # Prefix match on "no" / "ne" covers both English and Czech "skip"
+        # answers without us hardcoding every translation. We also explicitly
+        # ignore positive-prefix answers (e.g. "Ne_vim" wouldn't normally
+        # be in the option list, but just in case).
+        if text.startswith("no") or text.startswith("ne"):
             entry_id = qid.split("discrepancy:", 1)[1]
             if entry_id:
                 result.add(entry_id)
@@ -437,6 +672,7 @@ def filter_profile_entries(
 __all__ = [
     "dedup_profile",
     "build_source_discrepancy_questions",
+    "build_date_conflict_questions",
     "excluded_ids_from_answers",
     "filter_profile_entries",
 ]

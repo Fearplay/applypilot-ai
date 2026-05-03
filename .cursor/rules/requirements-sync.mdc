@@ -1,0 +1,37 @@
+---
+description: Keep requirements.txt in sync with every Python dependency change
+alwaysApply: true
+---
+
+# Requirements sync
+
+Whenever a change introduces, removes, or upgrades a third-party Python dependency, the corresponding line in [`requirements.txt`](../../requirements.txt) MUST be updated in the SAME commit. The user must never have to discover a missing dependency at runtime.
+
+## Triggers
+
+You MUST update `requirements.txt` when ANY of the following happen in the same change:
+
+- A new top-level `import <package>` or `from <package> import ...` is added that maps to a third-party PyPI package (i.e. not part of the Python standard library and not a first-party module under `src/`).
+- An existing dependency's import is removed and no other module in the codebase still imports it.
+- You upgrade or downgrade an existing dependency.
+- You introduce an optional/extras feature that needs an additional package.
+
+## Procedure
+
+1. Identify the PyPI distribution name for the import (e.g. `from PIL import Image` -> `Pillow`, `import bs4` -> `beautifulsoup4`).
+2. Look up the latest stable version on PyPI (or the version already installed locally via `pip show <package>`).
+3. Append the dependency to `requirements.txt` using a compatible-release pin: `package~=MAJOR.MINOR` (e.g. `playwright~=1.50`). This allows patch updates but locks the major/minor band.
+4. Group the new line near related entries; keep the file alphabetised within its existing groups when one exists.
+5. If you removed every usage of a dependency, delete its line from `requirements.txt`.
+6. After editing, verify the file still parses by reading it; if a virtual environment is active, run `pip install -r requirements.txt` to confirm installability before committing.
+
+## Forbidden
+
+- Adding a third-party import without touching `requirements.txt`.
+- Pinning to an exact `==` version unless the user asks for it (they want patch updates by default).
+- Listing the same dependency twice or under contradictory pins.
+- Adding optional dev-only packages here; put them in a clearly labelled `# --- dev ---` section at the bottom.
+
+## Retroactive application
+
+If you are touching this repository and notice a missing dependency that was added by an earlier change, fix it in the current PR even if you did not introduce it.
