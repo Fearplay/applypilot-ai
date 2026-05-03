@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThreadPool
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QKeySequence
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 from ..ai.base import BaseAIProvider
 from ..ai.provider_factory import build_provider
 from ..config import Settings, load_settings
+from ..i18n import get_language, register_listener, set_language, t
 from ..models.candidate import CandidateProfile
 from ..models.documents import (
     CoverLetter,
@@ -48,9 +49,11 @@ from ..services.interview_generator import generate_interview_questions
 from ..services.match_engine import compute_match, needs_clarifying_questions
 from ..services.question_generator import generate_questions
 from ..services.resume_generator import generate_tailored_resume
+from ..utils.preferences import set_preference
 from .documents_page import DocumentsPage
 from .history_page import HistoryPage
 from .match_report_page import MatchReportPage
+from .output_language_dialog import OutputLanguageDialog
 from .questions_dialog import QuestionsDialog
 from .setup_page import SetupPage
 from .theme import Tokens
@@ -77,6 +80,10 @@ class WorkflowState:
     interview: list[InterviewQuestion] = field(default_factory=list)
     gaps: list[SkillGap] = field(default_factory=list)
     package: GeneratedApplicationPackage | None = None
+    #: Language for the resume / cover letter / interview / gap plan. Picked
+    #: by the user via :class:`OutputLanguageDialog` right before document
+    #: generation. Defaults to the UI language until the dialog asks.
+    docs_language: str = "en"
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +92,7 @@ class WorkflowState:
 class SettingsDialog(QDialog):
     def __init__(self, settings: Settings, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("AI provider settings")
+        self.setWindowTitle(t("settings.title"))
         self.setMinimumWidth(560)
 
         self._settings = settings
@@ -94,20 +101,13 @@ class SettingsDialog(QDialog):
         layout.setContentsMargins(20, 18, 20, 16)
         layout.setSpacing(12)
 
-        title = QLabel("AI provider")
+        title = QLabel(t("settings.section"))
         title.setStyleSheet(
             f"color: {Tokens.text}; font-size: 18px; font-weight: 600;"
         )
         layout.addWidget(title)
 
-        info = QLabel(
-            "<b>Tip:</b> this dialog only affects the <b>current session</b>. "
-            "Restarting the app reloads everything from <code>.env</code> in "
-            "the project root - copy <code>.env.example</code> to "
-            "<code>.env</code> and edit <code>AI_PROVIDER</code>, "
-            "<code>AI_API_KEY</code>, <code>AI_BASE_URL</code> and "
-            "<code>AI_MODEL</code> to make the change permanent."
-        )
+        info = QLabel(t("settings.tip_html"))
         info.setTextFormat(Qt.RichText)
         info.setWordWrap(True)
         info.setStyleSheet(
@@ -121,50 +121,37 @@ class SettingsDialog(QDialog):
         form = QFormLayout()
         form.setSpacing(10)
         self._provider_combo = QComboBox()
-        self._provider_combo.addItem("fake (offline demo, default)", "fake")
+        self._provider_combo.addItem(t("settings.provider.fake"), "fake")
         self._provider_combo.addItem(
-            "openai_compatible (any compatible HTTP endpoint)",
+            t("settings.provider.openai"),
             "openai_compatible",
         )
         self._provider_combo.setItemData(
             0,
-            "Free, deterministic offline mode. Even with an API key filled in "
-            "below, leaving Provider on 'fake' keeps the demo - switch to "
-            "'openai_compatible' to actually call the API.",
+            t("settings.provider.fake_tip"),
             Qt.ToolTipRole,
         )
         self._provider_combo.setItemData(
             1,
-            "Calls the OpenAI-compatible /v1/chat/completions endpoint at the "
-            "Base URL below. Requires a valid API key.",
+            t("settings.provider.openai_tip"),
             Qt.ToolTipRole,
         )
         if settings.ai_provider == "openai_compatible":
             self._provider_combo.setCurrentIndex(1)
-        form.addRow("Provider", self._provider_combo)
+        form.addRow(t("settings.provider"), self._provider_combo)
 
         self._base_url = QLineEdit(settings.ai_base_url)
-        form.addRow("Base URL", self._base_url)
+        form.addRow(t("settings.base_url"), self._base_url)
 
         self._api_key = QLineEdit(settings.ai_api_key)
         self._api_key.setEchoMode(QLineEdit.Password)
-        form.addRow("API key", self._api_key)
+        form.addRow(t("settings.api_key"), self._api_key)
 
         self._model = QLineEdit(settings.ai_model)
-        form.addRow("Model", self._model)
+        form.addRow(t("settings.model"), self._model)
         layout.addLayout(form)
 
-        hint = QLabel(
-            "<b>Examples</b><br>"
-            "&bull; OpenAI: <code>https://api.openai.com/v1</code> "
-            "<code>gpt-4o-mini</code><br>"
-            "&bull; Groq: <code>https://api.groq.com/openai/v1</code> "
-            "<code>llama-3.3-70b-versatile</code><br>"
-            "&bull; Mistral: <code>https://api.mistral.ai/v1</code> "
-            "<code>mistral-small-latest</code><br>"
-            "&bull; Ollama (local): <code>http://localhost:11434/v1</code> "
-            "<code>llama3.1</code>"
-        )
+        hint = QLabel(t("settings.examples_html"))
         hint.setTextFormat(Qt.RichText)
         hint.setStyleSheet(f"color: {Tokens.text_muted}; font-size: 11px;")
         layout.addWidget(hint)
@@ -208,7 +195,7 @@ class _HeaderBar(QFrame):
         layout.setContentsMargins(28, 0, 18, 0)
         layout.setSpacing(10)
 
-        self._title = QLabel("Setup")
+        self._title = QLabel(t("sidebar.setup.title"))
         self._title.setStyleSheet(
             f"color: {Tokens.text}; font-size: 17px; font-weight: 600;"
         )
@@ -216,7 +203,7 @@ class _HeaderBar(QFrame):
 
         layout.addStretch(1)
 
-        self._provider_chip = StatusChip("Demo", variant="demo", parent=self)
+        self._provider_chip = StatusChip(t("chip.demo"), variant="demo", parent=self)
         layout.addWidget(self._provider_chip)
 
     def set_title(self, text: str) -> None:
@@ -229,28 +216,40 @@ class _HeaderBar(QFrame):
 # ---------------------------------------------------------------------------
 # Main window
 # ---------------------------------------------------------------------------
-_SECTIONS: list[SidebarItem] = [
-    SidebarItem(key="setup",     title="Setup",         subtitle="Job + profile inputs"),
-    SidebarItem(key="match",     title="Match report",  subtitle="Scores & evidence"),
-    SidebarItem(key="documents", title="Documents",     subtitle="Resume + cover + export"),
-    SidebarItem(key="history",   title="History",       subtitle="Past analyses"),
-]
-_SECTION_INDEX: dict[str, int] = {item.key: i for i, item in enumerate(_SECTIONS)}
+_SECTION_KEYS: list[str] = ["setup", "match", "documents", "history"]
+_SECTION_INDEX: dict[str, int] = {k: i for i, k in enumerate(_SECTION_KEYS)}
+
+
+def _build_sections() -> list[SidebarItem]:
+    """Construct the sidebar item list using the active i18n strings."""
+    return [
+        SidebarItem(
+            key=k,
+            title=t(f"sidebar.{k}.title"),
+            subtitle=t(f"sidebar.{k}.subtitle"),
+        )
+        for k in _SECTION_KEYS
+    ]
 
 
 class MainWindow(QMainWindow):
     def __init__(self, settings: Settings, provider: BaseAIProvider) -> None:
         super().__init__()
-        self.setWindowTitle("ApplyPilot AI")
+        # Make sure the i18n module reflects the resolved settings before any
+        # widget pulls its strings via t().
+        set_language(settings.ui_language)
+        self.setWindowTitle(t("app.title"))
         self.resize(1280, 820)
         self._settings = settings
         self._provider = provider
-        self._state = WorkflowState()
+        self._state = WorkflowState(docs_language=settings.ui_language)
         self._pool = QThreadPool.globalInstance()
+        self._language_actions: dict[str, QAction] = {}
 
         self._build_ui()
         self._refresh_provider_chip()
         self._goto("setup")
+        register_listener(self._on_language_changed)
 
     # ------------------------------------------------------------------ UI
     def _build_ui(self) -> None:
@@ -260,7 +259,8 @@ class MainWindow(QMainWindow):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        self._sidebar = Sidebar(_SECTIONS, title="ApplyPilot")
+        self._sections = _build_sections()
+        self._sidebar = Sidebar(self._sections, title="ApplyPilot")
         self._sidebar.section_clicked.connect(self._goto)
         outer.addWidget(self._sidebar)
 
@@ -301,25 +301,43 @@ class MainWindow(QMainWindow):
 
     def _build_menu(self) -> None:
         menu = self.menuBar()
-        file_menu = menu.addMenu("&File")
-        open_settings = QAction("AI provider &settings...", self)
-        open_settings.setShortcut(QKeySequence("Ctrl+,"))
-        open_settings.triggered.connect(self._open_settings)
-        file_menu.addAction(open_settings)
-        load_sample = QAction("Load &sample data", self)
-        load_sample.setShortcut(QKeySequence("Ctrl+L"))
-        load_sample.triggered.connect(self._on_load_sample)
-        file_menu.addAction(load_sample)
-        file_menu.addSeparator()
-        quit_action = QAction("&Quit", self)
-        quit_action.setShortcut(QKeySequence("Ctrl+Q"))
-        quit_action.triggered.connect(self.close)
-        file_menu.addAction(quit_action)
+        menu.clear()
+        self._file_menu = menu.addMenu(t("menu.file"))
+        self._action_settings = QAction(t("menu.settings"), self)
+        self._action_settings.setShortcut(QKeySequence("Ctrl+,"))
+        self._action_settings.triggered.connect(self._open_settings)
+        self._file_menu.addAction(self._action_settings)
+        self._action_sample = QAction(t("menu.load_sample"), self)
+        self._action_sample.setShortcut(QKeySequence("Ctrl+L"))
+        self._action_sample.triggered.connect(self._on_load_sample)
+        self._file_menu.addAction(self._action_sample)
+        self._file_menu.addSeparator()
 
-        help_menu = menu.addMenu("&Help")
-        about = QAction("&About ApplyPilot AI", self)
-        about.triggered.connect(self._show_about)
-        help_menu.addAction(about)
+        self._language_menu = self._file_menu.addMenu(t("menu.language"))
+        self._language_group = QActionGroup(self)
+        self._language_group.setExclusive(True)
+        self._language_actions = {}
+        for code, label_key in (("en", "menu.language.english"), ("cs", "menu.language.czech")):
+            action = QAction(t(label_key), self, checkable=True)
+            action.setData(code)
+            action.triggered.connect(lambda _checked, c=code: self._on_language_action(c))
+            self._language_group.addAction(action)
+            self._language_menu.addAction(action)
+            self._language_actions[code] = action
+        active = get_language()
+        if active in self._language_actions:
+            self._language_actions[active].setChecked(True)
+
+        self._file_menu.addSeparator()
+        self._action_quit = QAction(t("menu.quit"), self)
+        self._action_quit.setShortcut(QKeySequence("Ctrl+Q"))
+        self._action_quit.triggered.connect(self.close)
+        self._file_menu.addAction(self._action_quit)
+
+        self._help_menu = menu.addMenu(t("menu.help"))
+        self._action_about = QAction(t("menu.about"), self)
+        self._action_about.triggered.connect(self._show_about)
+        self._help_menu.addAction(self._action_about)
 
     # ----------------------------------------------------------- helpers
     def _goto(self, key: str) -> None:
@@ -328,15 +346,48 @@ class MainWindow(QMainWindow):
             return
         self._stack.setCurrentIndex(index)
         self._sidebar.set_active(key)
-        self._header.set_title(_SECTIONS[index].title)
+        self._header.set_title(t(f"sidebar.{key}.title"))
         if key == "history":
             self._history_page.refresh()
 
     def _refresh_provider_chip(self) -> None:
         if self._provider.is_demo:
-            self._header.set_provider_chip("Demo", "demo")
+            self._header.set_provider_chip(t("chip.demo"), "demo")
         else:
-            self._header.set_provider_chip("Live AI", "live")
+            self._header.set_provider_chip(t("chip.live"), "live")
+
+    # ----------------------------------------------------------- i18n
+    def _on_language_action(self, code: str) -> None:
+        if code == get_language():
+            return
+        set_language(code)
+        try:
+            set_preference("ui_language", code)
+        except Exception:
+            logger.warning("Could not persist UI language", exc_info=True)
+        QMessageBox.information(
+            self, t("lang_change.title"), t("lang_change.body")
+        )
+
+    def _on_language_changed(self, code: str) -> None:
+        """Live retranslate everything we can without rebuilding pages."""
+        self.setWindowTitle(t("app.title"))
+        # Update sidebar row titles and the section / activity headings.
+        self._sidebar.update_row_titles(
+            {k: (t(f"sidebar.{k}.title"), t(f"sidebar.{k}.subtitle")) for k in _SECTION_KEYS}
+        )
+        # Header title for the currently selected stack page.
+        current_index = self._stack.currentIndex()
+        for key, idx in _SECTION_INDEX.items():
+            if idx == current_index:
+                self._header.set_title(t(f"sidebar.{key}.title"))
+                break
+        self._refresh_provider_chip()
+        # Rebuild the menu so that menu / action labels reflect the new locale.
+        self._build_menu()
+        # Make sure the docs language defaults follow the UI for unstarted runs.
+        if self._state.match_report is None:
+            self._state.docs_language = code
 
     def _replace_provider(self, settings: Settings) -> None:
         self._settings = settings
@@ -351,15 +402,7 @@ class MainWindow(QMainWindow):
             self._replace_provider(dlg.accepted_settings())
 
     def _show_about(self) -> None:
-        QMessageBox.about(
-            self,
-            "About ApplyPilot AI",
-            "<h3>ApplyPilot AI</h3>"
-            "<p>Job URL to Tailored Resume &amp; Cover Letter</p>"
-            "<p>Provider-agnostic GenAI desktop assistant. MIT licensed.</p>"
-            "<p><a href='https://github.com/Fearplay/applypilot-ai'>"
-            "github.com/Fearplay/applypilot-ai</a></p>",
-        )
+        QMessageBox.about(self, t("about.title"), t("about.html"))
 
     def _on_load_sample(self) -> None:
         sample_dir = self._settings.sample_data_dir
@@ -371,14 +414,14 @@ class MainWindow(QMainWindow):
         if not jd_path.exists():
             QMessageBox.information(
                 self,
-                "Sample data missing",
-                f"Could not find {jd_path}.",
+                t("status.sample_missing.title"),
+                t("status.sample_missing.body", path=jd_path),
             )
             return
         try:
             jd = jd_path.read_text(encoding="utf-8")
         except OSError as exc:
-            QMessageBox.warning(self, "Could not read sample", str(exc))
+            QMessageBox.warning(self, t("status.sample_unread.title"), str(exc))
             return
 
         github_profile_url: str | None = None
@@ -394,23 +437,25 @@ class MainWindow(QMainWindow):
             github_profile_url=github_profile_url,
         )
         self._goto("setup")
-        self._sidebar.set_activity("Sample data loaded")
-        self.statusBar().showMessage(
-            "Sample data loaded - click 'Run analysis' to continue.", 5000
-        )
+        self._sidebar.set_activity(t("status.sample_loaded"))
+        self.statusBar().showMessage(t("status.sample_loaded_msg"), 5000)
 
     # ----------------------------------------------------------- workflow
     def _on_job_parsed(self, job: JobPosting) -> None:
         self._state.job = job
-        self._sidebar.set_status("setup", "In progress", "active")
-        self._sidebar.set_activity(f"Parsed job: {job.title or 'Unknown'}")
+        self._sidebar.set_status("setup", t("chip.active"), "active")
+        self._sidebar.set_activity(
+            t("status.parsed_job", title=job.title or t("status.unknown_role"))
+        )
 
     def _on_profile_built(self, profile: CandidateProfile) -> None:
         self._state.candidate = profile
         if self._state.job is None:
-            QMessageBox.warning(self, "No job", "Please add a job description first.")
+            QMessageBox.warning(
+                self, t("status.no_job.title"), t("status.no_job.body")
+            )
             return
-        self._sidebar.set_activity("Computing match score...")
+        self._sidebar.set_activity(t("status.computing_match"))
         self._start_match()
 
     def _start_match(self) -> None:
@@ -418,12 +463,15 @@ class MainWindow(QMainWindow):
         job = self._state.job
         candidate = self._state.candidate
         answers = self._state.answers
+        ui_lang = get_language()
         assert job is not None and candidate is not None
 
-        self.statusBar().showMessage("Computing match score...")
+        self.statusBar().showMessage(t("status.computing_match"))
 
         def work():
-            return compute_match(provider, job, candidate, answers)
+            return compute_match(
+                provider, job, candidate, answers, output_language=ui_lang
+            )
 
         run_in_background(
             self._pool, work,
@@ -446,12 +494,15 @@ class MainWindow(QMainWindow):
         job = self._state.job
         candidate = self._state.candidate
         answers = self._state.answers
+        ui_lang = get_language()
 
-        self.statusBar().showMessage("Generating clarifying questions...")
-        self._sidebar.set_activity("Generating clarifying questions...")
+        self.statusBar().showMessage(t("status.generating_questions"))
+        self._sidebar.set_activity(t("status.generating_questions"))
 
         def work():
-            return generate_questions(provider, job, candidate, answers)
+            return generate_questions(
+                provider, job, candidate, answers, output_language=ui_lang
+            )
 
         run_in_background(
             self._pool, work,
@@ -477,12 +528,15 @@ class MainWindow(QMainWindow):
         job = self._state.job
         candidate = self._state.candidate
         answers = self._state.answers
+        ui_lang = get_language()
 
-        self.statusBar().showMessage("Recomputing match with your answers...")
-        self._sidebar.set_activity("Recomputing match...")
+        self.statusBar().showMessage(t("status.recomputing_match"))
+        self._sidebar.set_activity(t("status.recomputing_match_short"))
 
         def work():
-            return compute_match(provider, job, candidate, answers)
+            return compute_match(
+                provider, job, candidate, answers, output_language=ui_lang
+            )
 
         run_in_background(
             self._pool, work,
@@ -500,10 +554,10 @@ class MainWindow(QMainWindow):
     def _show_match_report(self) -> None:
         assert self._state.match_report is not None
         self._match_page.set_report(self._state.match_report)
-        self._sidebar.set_status("setup", "Done", "done")
-        self._sidebar.set_status("match", "Ready", "active")
+        self._sidebar.set_status("setup", t("chip.done"), "done")
+        self._sidebar.set_status("match", t("chip.ready"), "active")
         self._sidebar.set_activity(
-            f"Match score: {self._state.match_report.overall_score} / 100"
+            t("status.match_score", score=self._state.match_report.overall_score)
         )
         self._goto("match")
 
@@ -516,14 +570,32 @@ class MainWindow(QMainWindow):
         evidence = self._state.evidence
         assert job and candidate and match_report and evidence
 
-        self.statusBar().showMessage("Generating tailored documents...")
-        self._sidebar.set_activity("Generating tailored documents...")
+        # Ask the user which language the documents should be in. Default to
+        # the previously chosen language (or the UI language on first run).
+        default_lang = self._state.docs_language or get_language()
+        dlg = OutputLanguageDialog(default=default_lang, parent=self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        docs_lang = dlg.selected_language()
+        self._state.docs_language = docs_lang
+
+        self.statusBar().showMessage(t("status.generating_docs"))
+        self._sidebar.set_activity(t("status.generating_docs"))
 
         def work():
-            resume = generate_tailored_resume(provider, job, candidate, answers, evidence.items)
-            cover = generate_cover_letter(provider, job, candidate, answers)
-            interview = generate_interview_questions(provider, job, candidate)
-            gaps = generate_skill_gap_plan(provider, match_report, job)
+            resume = generate_tailored_resume(
+                provider, job, candidate, answers, evidence.items,
+                output_language=docs_lang,
+            )
+            cover = generate_cover_letter(
+                provider, job, candidate, answers, output_language=docs_lang
+            )
+            interview = generate_interview_questions(
+                provider, job, candidate, output_language=docs_lang
+            )
+            gaps = generate_skill_gap_plan(
+                provider, match_report, job, output_language=docs_lang
+            )
             return (resume, cover, interview, gaps)
 
         run_in_background(
@@ -553,14 +625,16 @@ class MainWindow(QMainWindow):
         self._state.package = package
         self._docs_page.load_package(package)
         self.statusBar().clearMessage()
-        self._sidebar.set_status("match", "Done", "done")
-        self._sidebar.set_status("documents", "Ready", "active")
-        self._sidebar.set_activity("Documents ready - review and export")
+        self._sidebar.set_status("match", t("chip.done"), "done")
+        self._sidebar.set_status("documents", t("chip.ready"), "active")
+        self._sidebar.set_activity(t("status.docs_ready"))
         self._goto("documents")
 
     def _on_save_analysis(self) -> None:
         if not self._state.package:
-            QMessageBox.warning(self, "Nothing to save", "Generate documents first.")
+            QMessageBox.warning(
+                self, t("status.no_save.title"), t("status.no_save.body")
+            )
             return
         package = self._state.package
 
@@ -569,19 +643,24 @@ class MainWindow(QMainWindow):
             entry = append_history(self._settings.output_dir, package)
             return paths, entry
 
-        self.statusBar().showMessage("Exporting full analysis to disk...")
+        self.statusBar().showMessage(t("status.exporting"))
 
         def on_done(result):
             paths, entry = result
             self.statusBar().clearMessage()
-            self._docs_page.set_status(f"Saved to {paths.folder}")
-            self._sidebar.set_status("documents", "Saved", "done")
-            self._sidebar.set_activity(f"Saved 9 files to {Path(paths.folder).name}")
+            self._docs_page.set_status(t("docs.saved_status", path=paths.folder))
+            self._sidebar.set_status("documents", t("chip.saved"), "done")
+            self._sidebar.set_activity(
+                t("status.score_summary", n=9, folder=Path(paths.folder).name)
+            )
             QMessageBox.information(
                 self,
-                "Analysis saved",
-                f"Saved 9 files to:\n{paths.folder}\n\n"
-                f"History updated (entry score: {entry.match_score} / 100).",
+                t("status.analysis_saved.title"),
+                t(
+                    "status.analysis_saved.body",
+                    folder=paths.folder,
+                    score=entry.match_score,
+                ),
             )
 
         run_in_background(
@@ -594,24 +673,26 @@ class MainWindow(QMainWindow):
         try:
             payload = load_package_files(folder_path)
         except OSError as exc:
-            QMessageBox.warning(self, "Could not load analysis", str(exc))
+            QMessageBox.warning(self, t("status.history_load_failed"), str(exc))
             return
         if not (payload.resume_md or payload.cover_letter_md or payload.match_report_md):
             QMessageBox.information(
                 self,
-                "Folder is empty",
-                f"No analysis artefacts found in:\n{folder_path}",
+                t("status.history_empty.title"),
+                t("status.history_empty.body", folder=folder_path),
             )
             return
         self._docs_page.load_from_stored_analysis(payload)
-        self._sidebar.set_status("documents", "Loaded", "active")
-        self._sidebar.set_activity(f"Re-opened {Path(folder_path).name}")
+        self._sidebar.set_status("documents", t("chip.active"), "active")
+        self._sidebar.set_activity(
+            t("status.reopened", folder=Path(folder_path).name)
+        )
         self._goto("documents")
 
     def _on_workflow_failed(self, message: str) -> None:
         self.statusBar().clearMessage()
-        self._sidebar.set_activity("Workflow error")
-        QMessageBox.critical(self, "Workflow error", message)
+        self._sidebar.set_activity(t("status.workflow_error"))
+        QMessageBox.critical(self, t("status.workflow_error"), message)
 
 
 __all__ = ["MainWindow"]

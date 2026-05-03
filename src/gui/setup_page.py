@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 
 from ..ai.base import BaseAIProvider
 from ..config import Settings
+from ..i18n import t
 from ..models.candidate import CandidateProfile, GitHubProject
 from ..models.job import JobPosting
 from ..services.github_analyzer import GitHubError, extract_username, fetch_github_projects
@@ -89,17 +90,13 @@ class SetupPage(QWidget):
         scroll.setWidget(host)
 
         # ----- header
-        title = QLabel("Build a tailored application")
+        title = QLabel(t("setup.heading"))
         title.setStyleSheet(
             f"color: {Tokens.text}; font-size: 24px; font-weight: 700;"
         )
         host_layout.addWidget(title)
 
-        subtitle = QLabel(
-            "Provide the job posting and your profile inputs. Everything below "
-            "is optional except the CV - the more context you share, the more "
-            "accurate the match report and tailored documents will be."
-        )
+        subtitle = QLabel(t("setup.subheading"))
         subtitle.setWordWrap(True)
         subtitle.setStyleSheet(f"color: {Tokens.text_muted}; font-size: 13px;")
         host_layout.addWidget(subtitle)
@@ -125,7 +122,7 @@ class SetupPage(QWidget):
         bar_layout.setContentsMargins(36, 14, 36, 14)
         bar_layout.setSpacing(10)
 
-        self._sample_btn = QPushButton("Try sample data")
+        self._sample_btn = QPushButton(t("setup.try_sample"))
         self._sample_btn.setProperty("variant", "ghost")
         bar_layout.addWidget(self._sample_btn)
 
@@ -135,7 +132,7 @@ class SetupPage(QWidget):
         )
         bar_layout.addWidget(self._status_lbl, stretch=1)
 
-        self._run_btn = QPushButton("Run analysis")
+        self._run_btn = QPushButton(t("setup.run"))
         self._run_btn.setProperty("variant", "primary")
         self._run_btn.setMinimumWidth(180)
         self._run_btn.clicked.connect(self._on_run_clicked)
@@ -145,24 +142,22 @@ class SetupPage(QWidget):
     # ----------------------------------------------------------- builders
     def _build_job_card(self) -> SectionCard:
         card = SectionCard(
-            title="Job posting",
-            subtitle="Fetch the description from a URL or paste the text below.",
-            eyebrow="Step 1",
+            title=t("setup.job.title"),
+            subtitle=t("setup.job.subtitle"),
+            eyebrow=t("setup.step1"),
         )
 
         url_row = QHBoxLayout()
         self._url_input = QLineEdit()
-        self._url_input.setPlaceholderText("https://example.com/jobs/qa-engineer")
+        self._url_input.setPlaceholderText(t("setup.job.url_placeholder"))
         url_row.addWidget(self._url_input, stretch=1)
-        self._fetch_btn = QPushButton("Fetch")
+        self._fetch_btn = QPushButton(t("setup.job.fetch"))
         self._fetch_btn.clicked.connect(self._on_fetch_clicked)
         url_row.addWidget(self._fetch_btn)
         card.add_layout(url_row)
 
         self._desc = QPlainTextEdit()
-        self._desc.setPlaceholderText(
-            "Paste the job description text here, or click Fetch above."
-        )
+        self._desc.setPlaceholderText(t("setup.job.text_placeholder"))
         self._desc.setMinimumHeight(180)
         self._desc.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         card.add_widget(self._desc)
@@ -170,17 +165,17 @@ class SetupPage(QWidget):
 
     def _build_profile_card(self) -> SectionCard:
         card = SectionCard(
-            title="Resume & profile",
-            subtitle="Drop your CV (required) and optionally a LinkedIn export.",
-            eyebrow="Step 2",
+            title=t("setup.profile.title"),
+            subtitle=t("setup.profile.subtitle"),
+            eyebrow=t("setup.step2"),
         )
         self._cv_drop = FileDropZone(
-            "CV (PDF / DOCX / TXT / HTML) - required",
+            t("setup.profile.cv_label"),
             extensions=(".pdf", ".docx", ".txt", ".html", ".htm"),
         )
         card.add_widget(self._cv_drop)
         self._li_drop = FileDropZone(
-            "LinkedIn export (PDF / TXT / HTML) - optional",
+            t("setup.profile.linkedin_label"),
             extensions=(".pdf", ".txt", ".html", ".htm"),
         )
         card.add_widget(self._li_drop)
@@ -188,33 +183,19 @@ class SetupPage(QWidget):
 
     def _build_github_card(self) -> SectionCard:
         card = SectionCard(
-            title="GitHub profile",
-            subtitle=(
-                "Paste your GitHub profile URL and the app will fetch your "
-                "public repositories automatically (uses GITHUB_TOKEN from "
-                ".env if set, anonymous otherwise)."
-            ),
-            eyebrow="Step 3",
+            title=t("setup.github.title"),
+            subtitle=t("setup.github.subtitle"),
+            eyebrow=t("setup.step3"),
         )
 
         self._gh_url = QLineEdit()
-        self._gh_url.setPlaceholderText(
-            "https://github.com/your-username  (or just 'your-username')"
-        )
+        self._gh_url.setPlaceholderText(t("setup.github.url_placeholder"))
         card.add_widget(self._gh_url)
 
-        self._gh_skip = QCheckBox("Skip GitHub - don't fetch repositories")
+        self._gh_skip = QCheckBox(t("setup.github.skip"))
         card.add_widget(self._gh_skip)
 
-        self._gh_hint = QLabel(
-            "Without <code>GITHUB_TOKEN</code>: ~60 anonymous requests per "
-            "hour from your IP. With a token in <code>.env</code>: 5000/h. "
-            "The AI provider never touches GitHub itself - the app calls the "
-            "public REST API directly. Generate a fine-grained read-only "
-            "token at "
-            "<a href=\"https://github.com/settings/personal-access-tokens\">"
-            "github.com/settings/personal-access-tokens</a>."
-        )
+        self._gh_hint = QLabel(t("setup.github.hint_html"))
         self._gh_hint.setTextFormat(Qt.RichText)
         self._gh_hint.setOpenExternalLinks(True)
         self._gh_hint.setWordWrap(True)
@@ -264,10 +245,12 @@ class SetupPage(QWidget):
     def _on_fetch_clicked(self) -> None:
         url = self._url_input.text().strip()
         if not url:
-            QMessageBox.warning(self, "Missing URL", "Please enter a job URL first.")
+            QMessageBox.warning(
+                self, t("setup.error.no_url.title"), t("setup.error.no_url.body")
+            )
             return
         self._fetch_btn.setEnabled(False)
-        self.set_status(f"Fetching {url}...")
+        self.set_status(t("setup.status.fetching", url=url))
 
         def work():
             return fetch_job_text(url)
@@ -284,17 +267,20 @@ class SetupPage(QWidget):
         self._desc.setPlainText(result.text)
         self._current_url = result.source_url
         self.set_status(
-            f"Fetched via {result.method} ({len(result.text)} chars)."
+            t(
+                "setup.status.fetched",
+                method=result.method,
+                chars=len(result.text),
+            )
         )
 
     def _on_fetch_failed(self, message: str) -> None:
         self._fetch_btn.setEnabled(True)
-        self.set_status("Fetch failed - paste the text manually.")
+        self.set_status(t("setup.status.fetch_failed"))
         QMessageBox.warning(
             self,
-            "Could not fetch URL",
-            "Could not auto-fetch the page. Please paste the description "
-            "text manually.\n\n" + message,
+            t("setup.error.fetch.title"),
+            t("setup.error.fetch.body", message=message),
         )
 
     def _resolve_github_username(self) -> str:
@@ -307,8 +293,8 @@ class SetupPage(QWidget):
         if not text:
             QMessageBox.warning(
                 self,
-                "Missing job description",
-                "Please paste a job description or fetch one from a URL first.",
+                t("setup.error.no_jd.title"),
+                t("setup.error.no_jd.body"),
             )
             return
         cv_path = self._cv_drop.current_path
@@ -317,13 +303,13 @@ class SetupPage(QWidget):
         if not (cv_path or li_path or gh_user):
             QMessageBox.warning(
                 self,
-                "Missing candidate input",
-                "Add at least a CV, a LinkedIn export or a GitHub profile URL.",
+                t("setup.error.no_candidate.title"),
+                t("setup.error.no_candidate.body"),
             )
             return
 
         self.set_busy(True)
-        self.set_status("Analysing job posting...")
+        self.set_status(t("setup.status.analysing"))
         self.analysis_started.emit()
 
         provider = self._provider
@@ -343,7 +329,11 @@ class SetupPage(QWidget):
         self._parsed_job = job
         self.job_parsed.emit(job)
         self.set_status(
-            f"Job parsed: {job.title} ({job.role_type}). Building candidate profile..."
+            t(
+                "setup.status.job_parsed",
+                title=job.title,
+                role=job.role_type,
+            )
         )
 
         provider = self._provider
@@ -378,17 +368,20 @@ class SetupPage(QWidget):
     def _on_profile_done(self, profile: CandidateProfile) -> None:
         self.set_busy(False)
         self.set_status(
-            f"Profile ready: {profile.full_name or 'Anonymous'} - "
-            f"{len(profile.technical_skills)} skills, "
-            f"{len(profile.projects)} GitHub projects"
+            t(
+                "setup.status.profile_ready",
+                name=profile.full_name or "Anonymous",
+                skills=len(profile.technical_skills),
+                projects=len(profile.projects),
+            )
         )
         self.profile_built.emit(profile)
 
     def _on_pipeline_failed(self, message: str) -> None:
         self.set_busy(False)
-        self.set_status("Analysis failed.")
+        self.set_status(t("setup.status.failed"))
         self.analysis_failed.emit(message)
-        QMessageBox.critical(self, "Analysis failed", message)
+        QMessageBox.critical(self, t("setup.error.pipeline.title"), message)
 
 
 __all__ = ["SetupPage"]

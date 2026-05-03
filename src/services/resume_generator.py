@@ -17,9 +17,12 @@ def generate_tailored_resume(
     candidate: CandidateProfile,
     answers: AnswersBundle | None = None,
     evidence: Sequence[EvidenceItem] = (),
+    output_language: str = "en",
 ) -> TailoredResume:
     answers = answers or AnswersBundle()
-    return provider.generate_resume(job, candidate, answers, evidence)
+    return provider.generate_resume(
+        job, candidate, answers, evidence, output_language=output_language
+    )
 
 
 __all__ = ["generate_tailored_resume"]

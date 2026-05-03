@@ -88,6 +88,8 @@ class Settings:
     ai_request_log: bool
     ai_debug_prompts: bool
 
+    ui_language: str
+
     github_token: str
 
     sample_data_dir: Path = field(default_factory=lambda: _project_root() / "sample_data")
@@ -140,8 +142,35 @@ def load_settings(env_file: str | os.PathLike[str] | None = None) -> Settings:
         ai_temperature=_float_env("AI_TEMPERATURE", 0.2),
         ai_request_log=_bool_env("AI_REQUEST_LOG", True),
         ai_debug_prompts=_bool_env("AI_DEBUG_PROMPTS", False),
+        ui_language=_resolve_ui_language(),
         github_token=os.getenv("GITHUB_TOKEN", "").strip(),
     )
+
+
+def _resolve_ui_language() -> str:
+    """Pick the UI language using env > saved preferences > default 'en'.
+
+    Priority order matches user expectations: an explicit env override always
+    wins (useful in tests / CI), otherwise the menu choice persisted from a
+    previous session via :mod:`src.utils.preferences` is used, finally we
+    fall back to English so the GUI stays predictable on first launch.
+    """
+    raw = (os.getenv("APPLYPILOT_UI_LANGUAGE") or "").strip().lower()
+    if raw in {"en", "cs"}:
+        return raw
+
+    try:
+        # Imported lazily to avoid pulling utils into a possible bootstrap
+        # path that runs before utils/__init__ exists.
+        from .utils.preferences import get_preference  # noqa: PLC0415
+
+        stored = get_preference("ui_language")
+        if isinstance(stored, str) and stored.strip().lower() in {"en", "cs"}:
+            return stored.strip().lower()
+    except Exception:  # pragma: no cover - prefs file is optional
+        pass
+
+    return "en"
 
 
 __all__ = ["Settings", "ProviderName", "load_settings"]

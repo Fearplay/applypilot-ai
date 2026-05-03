@@ -13,9 +13,12 @@ def generate_cover_letter(
     job: JobPosting,
     candidate: CandidateProfile,
     answers: AnswersBundle | None = None,
+    output_language: str = "en",
 ) -> CoverLetter:
     answers = answers or AnswersBundle()
-    return provider.generate_cover_letter(job, candidate, answers)
+    return provider.generate_cover_letter(
+        job, candidate, answers, output_language=output_language
+    )
 
 
 __all__ = ["generate_cover_letter"]

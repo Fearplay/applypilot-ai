@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..i18n import t
 from ..models.package import GeneratedApplicationPackage
 from ..services.export_service import (
     cover_letter_to_markdown,
@@ -62,9 +63,7 @@ class DocumentsPage(QWidget):
         body_layout.setSpacing(12)
         outer.addWidget(body, stretch=1)
 
-        hint = QLabel(
-            "Review and tweak each document. Exporters use the text exactly as shown."
-        )
+        hint = QLabel(t("docs.hint"))
         hint.setStyleSheet(f"color: {Tokens.text_muted}; font-size: 12px;")
         body_layout.addWidget(hint)
 
@@ -77,13 +76,13 @@ class DocumentsPage(QWidget):
         self._interview_edit = self._make_editor()
         self._gap_edit = self._make_editor()
         self._evidence_edit = self._make_editor(read_only=True)
-        self._tabs.addTab(self._resume_edit, "Tailored Resume")
-        self._tabs.addTab(self._modern_resume, "Modern Resume")
-        self._tabs.addTab(self._cover_edit, "Cover Letter")
-        self._tabs.addTab(self._match_edit, "Match Report")
-        self._tabs.addTab(self._interview_edit, "Interview Prep")
-        self._tabs.addTab(self._gap_edit, "Skill Gap Plan")
-        self._tabs.addTab(self._evidence_edit, "Evidence (read-only)")
+        self._tabs.addTab(self._resume_edit, t("docs.tab.resume"))
+        self._tabs.addTab(self._modern_resume, t("docs.tab.modern_resume"))
+        self._tabs.addTab(self._cover_edit, t("docs.tab.cover"))
+        self._tabs.addTab(self._match_edit, t("docs.tab.match"))
+        self._tabs.addTab(self._interview_edit, t("docs.tab.interview"))
+        self._tabs.addTab(self._gap_edit, t("docs.tab.gaps"))
+        self._tabs.addTab(self._evidence_edit, t("docs.tab.evidence"))
         body_layout.addWidget(self._tabs, stretch=1)
         self._modern_resume_html: str = ""
 
@@ -99,23 +98,23 @@ class DocumentsPage(QWidget):
         bar_layout = QHBoxLayout(bar)
         bar_layout.setContentsMargins(36, 12, 36, 12)
         bar_layout.setSpacing(8)
-        back = QPushButton("Back to match")
+        back = QPushButton(t("docs.back"))
         back.setProperty("variant", "ghost")
         back.clicked.connect(self.back_clicked.emit)
         bar_layout.addWidget(back)
         bar_layout.addStretch(1)
 
-        self._export_md_btn = QPushButton("Export MD")
+        self._export_md_btn = QPushButton(t("docs.export_md"))
         self._export_md_btn.clicked.connect(self._export_current_md)
         bar_layout.addWidget(self._export_md_btn)
-        self._export_html_btn = QPushButton("Export HTML")
+        self._export_html_btn = QPushButton(t("docs.export_html"))
         self._export_html_btn.clicked.connect(self._export_current_html)
         bar_layout.addWidget(self._export_html_btn)
-        self._export_docx_btn = QPushButton("Export DOCX")
+        self._export_docx_btn = QPushButton(t("docs.export_docx"))
         self._export_docx_btn.clicked.connect(self._export_current_docx)
         bar_layout.addWidget(self._export_docx_btn)
 
-        self._save_btn = QPushButton("Save full analysis")
+        self._save_btn = QPushButton(t("docs.save"))
         self._save_btn.setProperty("variant", "primary")
         self._save_btn.setMinimumWidth(180)
         self._save_btn.clicked.connect(self.save_analysis_clicked.emit)
@@ -155,21 +154,18 @@ class DocumentsPage(QWidget):
         actions.setContentsMargins(0, 0, 0, 0)
         actions.setSpacing(6)
         info = QLabel(
-            "Printable A4 preview. Use 'Open in browser' for a pixel-perfect "
-            "render or 'Export styled HTML' to save the file."
-            if _HAS_WEB_ENGINE
-            else "Simplified preview - QtWebEngine not available. Open in browser "
-            "for the full styled layout."
+            t("docs.modern.info_full") if _HAS_WEB_ENGINE
+            else t("docs.modern.info_simple")
         )
         info.setWordWrap(True)
         info.setStyleSheet(f"color: {Tokens.text_muted}; font-size: 11px;")
         actions.addWidget(info, stretch=1)
 
-        open_browser = QPushButton("Open in browser")
+        open_browser = QPushButton(t("docs.modern.open"))
         open_browser.clicked.connect(self._open_modern_resume_in_browser)
         actions.addWidget(open_browser)
 
-        save_html = QPushButton("Export styled HTML")
+        save_html = QPushButton(t("docs.modern.export_html"))
         save_html.clicked.connect(self._export_modern_resume_html)
         actions.addWidget(save_html)
 
@@ -186,7 +182,9 @@ class DocumentsPage(QWidget):
     def _open_modern_resume_in_browser(self) -> None:
         if not self._modern_resume_html:
             QMessageBox.information(
-                self, "Nothing to preview", "Generate a resume first."
+                self,
+                t("docs.modern.nothing_preview_title"),
+                t("docs.modern.nothing_preview_body"),
             )
             return
         try:
@@ -195,27 +193,29 @@ class DocumentsPage(QWidget):
             tmp.write_text(self._modern_resume_html, encoding="utf-8")
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(tmp)))
         except OSError as exc:
-            QMessageBox.warning(self, "Open failed", str(exc))
+            QMessageBox.warning(self, t("docs.modern.open_failed"), str(exc))
 
     def _export_modern_resume_html(self) -> None:
         if not self._modern_resume_html:
             QMessageBox.information(
-                self, "Nothing to export", "Generate a resume first."
+                self,
+                t("docs.modern.nothing_export_title"),
+                t("docs.modern.nothing_export_body"),
             )
             return
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "Export styled resume HTML",
+            t("docs.modern.export_title"),
             "tailored_resume.html",
-            "HTML (*.html);;All files (*)",
+            t("docs.modern.export_filter"),
         )
         if not path:
             return
         try:
             Path(path).write_text(self._modern_resume_html, encoding="utf-8")
-            self._status.setText(f"Saved styled HTML to {path}")
+            self._status.setText(t("docs.saved_html_status", path=path))
         except OSError as exc:
-            QMessageBox.critical(self, "Export failed", str(exc))
+            QMessageBox.critical(self, t("docs.error.export_title"), str(exc))
 
     # ----------------------------------------------------------- public
     def load_package(self, package: GeneratedApplicationPackage) -> None:
@@ -239,8 +239,11 @@ class DocumentsPage(QWidget):
         self._save_btn.setEnabled(True)
         self._save_btn.setToolTip("")
         self._status.setText(
-            f"Loaded {len(package.evidence)} evidence items - score "
-            f"{package.match_report.overall_score} / 100"
+            t(
+                "docs.status.loaded",
+                count=len(package.evidence),
+                score=package.match_report.overall_score,
+            )
         )
 
     def load_from_stored_analysis(self, payload) -> None:
@@ -263,17 +266,18 @@ class DocumentsPage(QWidget):
             payload.styled_resume_html or payload.summary_html or ""
         )
         self._save_btn.setEnabled(False)
-        self._save_btn.setToolTip(
-            "Read-only view of an existing analysis. Run a fresh analysis "
-            "to enable saving."
-        )
+        self._save_btn.setToolTip(t("docs.read_only_tip"))
         ev_count = 0
         if isinstance(payload.evidence, dict):
             items = payload.evidence.get("items")
             if isinstance(items, list):
                 ev_count = len(items)
         self._status.setText(
-            f"Loaded analysis from {payload.folder.name} ({ev_count} evidence items)."
+            t(
+                "docs.status.opened_history",
+                folder=payload.folder.name,
+                count=ev_count,
+            )
         )
 
     def set_status(self, message: str) -> None:
@@ -287,51 +291,54 @@ class DocumentsPage(QWidget):
 
     # ----------------------------------------------------------- exporters
     def _export_current_md(self) -> None:
+        tab = self.current_tab_name()
         path, _ = QFileDialog.getSaveFileName(
             self,
-            f"Export {self.current_tab_name()} as Markdown",
-            f"{self.current_tab_name().lower().replace(' ', '_')}.md",
-            "Markdown (*.md);;All files (*)",
+            t("docs.export.md_title", tab=tab),
+            f"{tab.lower().replace(' ', '_')}.md",
+            t("docs.export.md_filter"),
         )
         if not path:
             return
         try:
             Path(path).write_text(self.current_text(), encoding="utf-8")
-            self._status.setText(f"Saved to {path}")
+            self._status.setText(t("docs.saved_status", path=path))
         except OSError as exc:
-            QMessageBox.critical(self, "Export failed", str(exc))
+            QMessageBox.critical(self, t("docs.error.export_title"), str(exc))
 
     def _export_current_html(self) -> None:
         try:
             import markdown as md_lib
         except ImportError as exc:  # pragma: no cover
-            QMessageBox.critical(self, "Missing dependency", str(exc))
+            QMessageBox.critical(self, t("docs.error.export_missing_dep"), str(exc))
             return
+        tab = self.current_tab_name()
         path, _ = QFileDialog.getSaveFileName(
             self,
-            f"Export {self.current_tab_name()} as HTML",
-            f"{self.current_tab_name().lower().replace(' ', '_')}.html",
-            "HTML (*.html);;All files (*)",
+            t("docs.export.html_title", tab=tab),
+            f"{tab.lower().replace(' ', '_')}.html",
+            t("docs.export.html_filter"),
         )
         if not path:
             return
         body = md_lib.markdown(self.current_text(), extensions=["extra"])
         html = (
             "<!doctype html><html><head><meta charset='utf-8'>"
-            f"<title>{self.current_tab_name()}</title></head><body>{body}</body></html>"
+            f"<title>{tab}</title></head><body>{body}</body></html>"
         )
         try:
             Path(path).write_text(html, encoding="utf-8")
-            self._status.setText(f"Saved to {path}")
+            self._status.setText(t("docs.saved_status", path=path))
         except OSError as exc:
-            QMessageBox.critical(self, "Export failed", str(exc))
+            QMessageBox.critical(self, t("docs.error.export_title"), str(exc))
 
     def _export_current_docx(self) -> None:
+        tab = self.current_tab_name()
         path, _ = QFileDialog.getSaveFileName(
             self,
-            f"Export {self.current_tab_name()} as DOCX",
-            f"{self.current_tab_name().lower().replace(' ', '_')}.docx",
-            "Word documents (*.docx);;All files (*)",
+            t("docs.export.docx_title", tab=tab),
+            f"{tab.lower().replace(' ', '_')}.docx",
+            t("docs.export.docx_filter"),
         )
         if not path:
             return
@@ -350,9 +357,9 @@ class DocumentsPage(QWidget):
                 else:
                     doc.add_paragraph(line)
             doc.save(path)
-            self._status.setText(f"Saved to {path}")
+            self._status.setText(t("docs.saved_status", path=path))
         except Exception as exc:
-            QMessageBox.critical(self, "Export failed", str(exc))
+            QMessageBox.critical(self, t("docs.error.export_title"), str(exc))
 
 
 __all__ = ["DocumentsPage"]

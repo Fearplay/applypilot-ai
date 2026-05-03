@@ -14,7 +14,12 @@ from src.ai import prompts
 from src.models.candidate import CandidateProfile
 from src.models.evidence import EvidenceItem
 from src.models.job import JobPosting
-from src.models.match import AnswersBundle, ClarifyingAnswer
+from src.models.match import (
+    AnswersBundle,
+    CategoryScores,
+    ClarifyingAnswer,
+    MatchReport,
+)
 
 
 def _evidence_items() -> list[EvidenceItem]:
@@ -110,3 +115,60 @@ def test_resume_user_prompt_serializes_evidence_list():
     assert "EVIDENCE:" in body
     assert "Used Python in production" in body
     assert "lorem ipsum " not in body
+
+
+# ---------------------------------------------------------------------------
+# OUTPUT_LANGUAGE policy
+# ---------------------------------------------------------------------------
+def test_resume_prompt_appends_czech_directive():
+    job = JobPosting(title="QA")
+    candidate = CandidateProfile(full_name="Candidate")
+    body = prompts.resume_user_prompt(
+        job, candidate, AnswersBundle(), [], output_language="cs"
+    )
+
+    assert "OUTPUT_LANGUAGE: Czech." in body
+    assert "Write every human-facing string in Czech." in body
+
+
+def test_match_report_prompt_appends_english_directive_by_default():
+    job = JobPosting(title="QA")
+    candidate = CandidateProfile(full_name="Candidate")
+    body = prompts.match_report_user_prompt(
+        job, candidate, AnswersBundle(), []
+    )
+
+    assert "OUTPUT_LANGUAGE: English." in body
+
+
+def test_clarifying_questions_prompt_includes_language_directive():
+    job = JobPosting(title="QA")
+    candidate = CandidateProfile(full_name="Candidate")
+    body = prompts.clarifying_questions_user_prompt(
+        job, candidate, output_language="cs"
+    )
+
+    assert body.strip().endswith("Write every human-facing string in Czech.")
+
+
+def test_cover_letter_prompt_appends_language_directive():
+    job = JobPosting(title="QA")
+    candidate = CandidateProfile(full_name="Candidate")
+    body = prompts.cover_letter_user_prompt(
+        job, candidate, AnswersBundle(), output_language="cs"
+    )
+
+    assert "OUTPUT_LANGUAGE: Czech." in body
+
+
+def test_unknown_language_falls_back_to_english():
+    job = JobPosting(title="QA")
+    report = MatchReport(
+        overall_score=50,
+        category_scores=CategoryScores(
+            technical_skills=50, experience=50, tools=50, qa_process=50
+        ),
+    )
+    body = prompts.skill_gap_user_prompt(report, job, output_language="de")
+
+    assert "OUTPUT_LANGUAGE: English." in body

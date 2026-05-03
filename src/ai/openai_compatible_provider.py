@@ -323,10 +323,13 @@ class OpenAICompatibleProvider(BaseAIProvider):
         return self._run("analyze_candidate", system, user, CandidateProfile)
 
     def generate_clarifying_questions(
-        self, job: JobPosting, candidate: CandidateProfile
+        self,
+        job: JobPosting,
+        candidate: CandidateProfile,
+        output_language: str = "en",
     ) -> list[ClarifyingQuestion]:
         system = prompts.system_prompt_for(job.role_type)
-        user = prompts.clarifying_questions_user_prompt(job, candidate)
+        user = prompts.clarifying_questions_user_prompt(job, candidate, output_language)
         wrapped = self._run("clarifying_questions", system, user, _QuestionsWrapper)
         return list(wrapped.items)
 
@@ -336,9 +339,12 @@ class OpenAICompatibleProvider(BaseAIProvider):
         candidate: CandidateProfile,
         answers: AnswersBundle,
         evidence: Sequence[EvidenceItem] = (),
+        output_language: str = "en",
     ) -> MatchReport:
         system = prompts.system_prompt_for(job.role_type)
-        user = prompts.match_report_user_prompt(job, candidate, answers, list(evidence))
+        user = prompts.match_report_user_prompt(
+            job, candidate, answers, list(evidence), output_language
+        )
         return self._run("match_report", system, user, MatchReport)
 
     def generate_resume(
@@ -347,9 +353,12 @@ class OpenAICompatibleProvider(BaseAIProvider):
         candidate: CandidateProfile,
         answers: AnswersBundle,
         evidence: Sequence[EvidenceItem] = (),
+        output_language: str = "en",
     ) -> TailoredResume:
         system = prompts.system_prompt_for(job.role_type)
-        user = prompts.resume_user_prompt(job, candidate, answers, list(evidence))
+        user = prompts.resume_user_prompt(
+            job, candidate, answers, list(evidence), output_language
+        )
         return self._run("resume", system, user, TailoredResume)
 
     def generate_cover_letter(
@@ -357,24 +366,31 @@ class OpenAICompatibleProvider(BaseAIProvider):
         job: JobPosting,
         candidate: CandidateProfile,
         answers: AnswersBundle,
+        output_language: str = "en",
     ) -> CoverLetter:
         system = prompts.system_prompt_for(job.role_type)
-        user = prompts.cover_letter_user_prompt(job, candidate, answers)
+        user = prompts.cover_letter_user_prompt(job, candidate, answers, output_language)
         return self._run("cover_letter", system, user, CoverLetter)
 
     def generate_interview_questions(
-        self, job: JobPosting, candidate: CandidateProfile
+        self,
+        job: JobPosting,
+        candidate: CandidateProfile,
+        output_language: str = "en",
     ) -> list[InterviewQuestion]:
         system = prompts.system_prompt_for(job.role_type)
-        user = prompts.interview_questions_user_prompt(job, candidate)
+        user = prompts.interview_questions_user_prompt(job, candidate, output_language)
         wrapped = self._run("interview_questions", system, user, _InterviewWrapper)
         return list(wrapped.items)
 
     def generate_skill_gap_plan(
-        self, match_report: MatchReport, job: JobPosting
+        self,
+        match_report: MatchReport,
+        job: JobPosting,
+        output_language: str = "en",
     ) -> list[SkillGap]:
         system = prompts.system_prompt_for(job.role_type)
-        user = prompts.skill_gap_user_prompt(match_report, job)
+        user = prompts.skill_gap_user_prompt(match_report, job, output_language)
         wrapped = self._run("skill_gap_plan", system, user, _GapsWrapper)
         return list(wrapped.items)
 

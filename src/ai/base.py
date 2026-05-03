@@ -53,9 +53,18 @@ class BaseAIProvider(ABC):
     # --------------------------------------------------------- clarifying Q
     @abstractmethod
     def generate_clarifying_questions(
-        self, job: JobPosting, candidate: CandidateProfile
+        self,
+        job: JobPosting,
+        candidate: CandidateProfile,
+        output_language: str = "en",
     ) -> list[ClarifyingQuestion]:
-        """Return clarifying questions for the human-in-the-loop step."""
+        """Return clarifying questions for the human-in-the-loop step.
+
+        ``output_language`` is the language the *user* will read - the
+        clarifying-question step is part of the in-app conversation, so it
+        usually matches the UI language rather than the final document
+        language. ``"en"`` and ``"cs"`` are recognised today.
+        """
 
     # ------------------------------------------------------------ match
     @abstractmethod
@@ -65,6 +74,7 @@ class BaseAIProvider(ABC):
         candidate: CandidateProfile,
         answers: AnswersBundle,
         evidence: Sequence[EvidenceItem] = (),
+        output_language: str = "en",
     ) -> MatchReport:
         """Compute the structured match report."""
 
@@ -76,6 +86,7 @@ class BaseAIProvider(ABC):
         candidate: CandidateProfile,
         answers: AnswersBundle,
         evidence: Sequence[EvidenceItem] = (),
+        output_language: str = "en",
     ) -> TailoredResume:
         """Generate the tailored ATS-friendly resume."""
 
@@ -86,20 +97,27 @@ class BaseAIProvider(ABC):
         job: JobPosting,
         candidate: CandidateProfile,
         answers: AnswersBundle,
+        output_language: str = "en",
     ) -> CoverLetter:
         """Generate a tailored cover letter."""
 
     # --------------------------------------------------------- interview Q
     @abstractmethod
     def generate_interview_questions(
-        self, job: JobPosting, candidate: CandidateProfile
+        self,
+        job: JobPosting,
+        candidate: CandidateProfile,
+        output_language: str = "en",
     ) -> list[InterviewQuestion]:
         """Generate likely interview questions with prep notes."""
 
     # ------------------------------------------------------------ gaps
     @abstractmethod
     def generate_skill_gap_plan(
-        self, match_report: MatchReport, job: JobPosting
+        self,
+        match_report: MatchReport,
+        job: JobPosting,
+        output_language: str = "en",
     ) -> list[SkillGap]:
         """Generate a structured skill-gap plan."""
 

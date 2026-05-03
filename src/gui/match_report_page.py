@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..i18n import t
 from ..models.match import MatchReport
 from .theme import Tokens
 from .widgets.evidence_card import EvidenceCard
@@ -171,7 +172,7 @@ class MatchReportPage(QWidget):
         badge_layout = QVBoxLayout(badge_box)
         badge_layout.setContentsMargins(20, 18, 20, 18)
         badge_layout.setSpacing(10)
-        badge_head = QLabel("OVERALL")
+        badge_head = QLabel(t("match.overall"))
         badge_head.setStyleSheet(
             f"color: {Tokens.text_muted}; font-size: 10px;"
             f" font-weight: 700; letter-spacing: 1.4px;"
@@ -184,10 +185,10 @@ class MatchReportPage(QWidget):
 
         cats_box = QVBoxLayout()
         cats_box.setSpacing(10)
-        self._tech = _CategoryBar("Technical skills")
-        self._exp = _CategoryBar("Experience")
-        self._tools = _CategoryBar("Tools")
-        self._proc = _CategoryBar("Process / QA")
+        self._tech = _CategoryBar(t("match.cat.tech"))
+        self._exp = _CategoryBar(t("match.cat.experience"))
+        self._tools = _CategoryBar(t("match.cat.tools"))
+        self._proc = _CategoryBar(t("match.cat.process"))
         for w in (self._tech, self._exp, self._tools, self._proc):
             cats_box.addWidget(w)
         cats_wrap = QFrame()
@@ -197,10 +198,7 @@ class MatchReportPage(QWidget):
         layout.addLayout(top)
 
         # Three list columns
-        lists_legend = QLabel(
-            "Hover over each column heading for an explanation of how the "
-            "AI bucketed these skills."
-        )
+        lists_legend = QLabel(t("match.legend"))
         lists_legend.setWordWrap(True)
         lists_legend.setStyleSheet(
             f"color: {Tokens.text_dim}; font-size: 11px; font-style: italic;"
@@ -210,36 +208,23 @@ class MatchReportPage(QWidget):
         lists = QHBoxLayout()
         lists.setSpacing(12)
         self._matched = _ListColumn(
-            "Matched",
-            tooltip=(
-                "Skills required by the job that have evidence in your CV, "
-                "LinkedIn, GitHub READMEs or in answers you marked as "
-                "'practical experience'."
-            ),
+            t("match.col.matched"),
+            tooltip=t("match.col.matched.tip"),
         )
         self._missing = _ListColumn(
-            "Missing / risky gaps",
-            tooltip=(
-                "Required or nice-to-have skills with no evidence at all. "
-                "The [risky] tag marks REQUIRED skills - leaving these out "
-                "is usually an automatic eliminator in ATS scans."
-            ),
+            t("match.col.missing"),
+            tooltip=t("match.col.missing.tip"),
         )
         self._ats = _ListColumn(
-            "ATS keywords",
-            tooltip=(
-                "High-signal phrases the hiring system ranks resumes by. "
-                "+ means the keyword appears in your profile, - means it is "
-                "missing. ATS bots (Workday, Greenhouse, Lever) sort "
-                "applicants partly by literal keyword overlap."
-            ),
+            t("match.col.ats"),
+            tooltip=t("match.col.ats.tip"),
         )
         for col in (self._matched, self._missing, self._ats):
             lists.addWidget(col, stretch=1)
         layout.addLayout(lists)
 
         # Evidence header + scrollable cards
-        ev_head = QLabel("EVIDENCE PREVIEW")
+        ev_head = QLabel(t("match.evidence_header"))
         ev_head.setStyleSheet(
             f"color: {Tokens.text_muted}; font-size: 10px;"
             f" font-weight: 700; letter-spacing: 1.4px; padding-top: 6px;"
@@ -265,12 +250,12 @@ class MatchReportPage(QWidget):
         )
         bar_layout = QHBoxLayout(bar)
         bar_layout.setContentsMargins(36, 14, 36, 14)
-        back = QPushButton("Back to setup")
+        back = QPushButton(t("match.back"))
         back.setProperty("variant", "ghost")
         back.clicked.connect(self.back_clicked.emit)
         bar_layout.addWidget(back)
         bar_layout.addStretch(1)
-        self._gen_btn = QPushButton("Generate documents")
+        self._gen_btn = QPushButton(t("match.generate"))
         self._gen_btn.setProperty("variant", "primary")
         self._gen_btn.setMinimumWidth(200)
         self._gen_btn.clicked.connect(self.generate_clicked.emit)
