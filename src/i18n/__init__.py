@@ -255,6 +255,23 @@ _STRINGS: dict[str, dict[str, str]] = {
             "Safety net also re-added these positions the AI dropped: "
             "{labels}."
         ),
+        "docs.refine.problem_label": "Problem {n}",
+        "docs.refine.problem_placeholder": "Problem {n}: what's wrong or missing?",
+        "docs.refine.add_problem": "+ Add another problem",
+        "docs.refine.add_problem_tip": (
+            "Add another numbered problem so the AI can address them as "
+            "separate, ordered tasks."
+        ),
+        "docs.refine.remove_problem_tip": "Remove this problem",
+        "docs.refine.empty_warning_title": "Nothing to refine",
+        "docs.refine.empty_warning_body": (
+            "Type at least one problem before clicking Refine with AI."
+        ),
+        "docs.refine.invented_project_dropped": (
+            "Removed project '{title}' because it isn't backed by your "
+            "CV, LinkedIn or GitHub data - the AI shouldn't add unverified "
+            "projects."
+        ),
         # ---- history page ----
         "history.loaded_from": "Loaded from <code>{path}</code>",
         "history.col.date": "Date",
@@ -352,6 +369,18 @@ _STRINGS: dict[str, dict[str, str]] = {
         "dedup.confirm.reason.unrelated": "AI flagged it as unrelated to the target role: {reason}",
         "dedup.confirm.reason.single_source": "Only one source mentioned this entry.",
         "dedup.confirm.reason.short_or_old": "Entry is short or older than the rest of your timeline.",
+        "dedup.confirm.preselected_hint": (
+            "Rows you previously asked to skip are pre-checked below. "
+            "Untick a box to keep that row in the resume after all."
+        ),
+        "dedup.confirm.preselected_badge": "Pre-selected from your earlier answer",
+        # ---- 'fresh run' UX on the setup page ----
+        "setup.fresh_run.label": "Re-ask clarifying questions on next run",
+        "setup.fresh_run.tip": (
+            "Discard the answers and skip-decisions from the previous run "
+            "so the clarifying-questions dialog appears again. Useful when "
+            "the new analysis should treat your inputs as a fresh start."
+        ),
         # ---- restart prompt ----
         "restart.title": "Restart required",
         "restart.body": (
@@ -654,6 +683,22 @@ _STRINGS: dict[str, dict[str, str]] = {
             "Bezpečnostní vrstva navíc doplnila tyto pozice, které AI "
             "vynechala: {labels}."
         ),
+        "docs.refine.problem_label": "Problém {n}",
+        "docs.refine.problem_placeholder": "Problém {n}: co je špatně nebo chybí?",
+        "docs.refine.add_problem": "+ Přidat další problém",
+        "docs.refine.add_problem_tip": (
+            "Přidej další očíslovaný problém, ať je AI může řešit jako "
+            "samostatné očíslované úkoly."
+        ),
+        "docs.refine.remove_problem_tip": "Odebrat tento problém",
+        "docs.refine.empty_warning_title": "Není co upřesnit",
+        "docs.refine.empty_warning_body": (
+            "Před kliknutím na Upřesnit pomocí AI napiš alespoň jeden problém."
+        ),
+        "docs.refine.invented_project_dropped": (
+            "Odstraněn projekt '{title}' - nemá oporu v tvém CV, LinkedInu "
+            "ani GitHubu, AI nesmí přidávat neověřené projekty."
+        ),
         "history.loaded_from": "Načteno z <code>{path}</code>",
         "history.col.date": "Datum",
         "history.col.company": "Firma",
@@ -749,6 +794,18 @@ _STRINGS: dict[str, dict[str, str]] = {
         "dedup.confirm.reason.unrelated": "AI vyhodnotila, že nesouvisí s cílovou pozicí: {reason}",
         "dedup.confirm.reason.single_source": "Tento záznam zmiňuje jen jeden zdroj.",
         "dedup.confirm.reason.short_or_old": "Záznam je krátký nebo starší než zbytek tvojí historie.",
+        "dedup.confirm.preselected_hint": (
+            "Řádky, které jsi v předchozí otázce označil/a jako vynechat, "
+            "jsou níže přednastavené k odstranění. Pokud je chceš nakonec "
+            "v životopisu nechat, odznač zaškrtnutí."
+        ),
+        "dedup.confirm.preselected_badge": "Předvybráno z předchozí odpovědi",
+        "setup.fresh_run.label": "Zeptat se znovu na doplňující otázky při dalším spuštění",
+        "setup.fresh_run.tip": (
+            "Zahodí odpovědi a rozhodnutí o vynechání z předchozího běhu, "
+            "takže se znovu objeví dialog s doplňujícími otázkami. Hodí se "
+            "když nová analýza má začít s čistým stolem."
+        ),
         "restart.title": "Vyžadován restart",
         "restart.body": (
             "ApplyPilot AI bude se změnou jazyka pracovat nejlépe po restartu. "

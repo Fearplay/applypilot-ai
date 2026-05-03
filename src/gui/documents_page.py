@@ -47,6 +47,213 @@ except ImportError:  # pragma: no cover - lighter envs
     _HAS_WEB_ENGINE = False
 
 
+# Maximum number of separate "Problem N" rows the user can stack. Six is
+# enough for any realistic feedback round and keeps the prompt size bounded
+# (each problem becomes one numbered line in the AI prompt).
+_MAX_REFINE_PROBLEMS = 6
+
+
+class _ProblemRow(QFrame):
+    """A single labelled text input + remove button inside :class:`_RefinePanel`.
+
+    The row is intentionally lightweight: just a numeric label, a one-line
+    text field and an optional remove button. The :class:`_RefinePanel`
+    owns ordering, numbering and add/remove orchestration so this widget
+    stays a passive container.
+    """
+
+    remove_requested = Signal(object)  # emits self
+
+    def __init__(self, index: int, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setStyleSheet(
+            f"_ProblemRow, QFrame[role='problem-row'] {{ "
+            f"background: {Tokens.bg}; border: 1px solid {Tokens.border}; "
+            "border-radius: 6px; }}"
+        )
+        self.setProperty("role", "problem-row")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 6, 6, 6)
+        layout.setSpacing(8)
+
+        self._label = QLabel(t("docs.refine.problem_label", n=index + 1))
+        self._label.setStyleSheet(
+            f"color: {Tokens.text}; font-size: 12px; font-weight: 600;"
+        )
+        self._label.setMinimumWidth(80)
+        layout.addWidget(self._label)
+
+        self._editor = QPlainTextEdit()
+        self._editor.setPlaceholderText(
+            t("docs.refine.problem_placeholder", n=index + 1)
+        )
+        self._editor.setMaximumHeight(56)
+        self._editor.setStyleSheet(
+            "QPlainTextEdit { border: 1px solid #CBD5E1; "
+            "border-radius: 6px; padding: 4px; font-size: 12px; }"
+        )
+        layout.addWidget(self._editor, stretch=1)
+
+        self._remove_btn = QPushButton("\u00d7")
+        self._remove_btn.setToolTip(t("docs.refine.remove_problem_tip"))
+        self._remove_btn.setFixedWidth(28)
+        self._remove_btn.setProperty("variant", "ghost")
+        self._remove_btn.clicked.connect(lambda: self.remove_requested.emit(self))
+        layout.addWidget(self._remove_btn)
+
+    # ----- public API used by _RefinePanel
+    def set_index(self, index: int) -> None:
+        """Re-number the row label after an add/remove changes ordering."""
+        self._label.setText(t("docs.refine.problem_label", n=index + 1))
+        self._editor.setPlaceholderText(
+            t("docs.refine.problem_placeholder", n=index + 1)
+        )
+
+    def text(self) -> str:
+        return self._editor.toPlainText().strip()
+
+    def clear(self) -> None:
+        self._editor.clear()
+
+    def set_busy(self, busy: bool) -> None:
+        self._editor.setReadOnly(busy)
+        self._remove_btn.setEnabled(not busy)
+
+    def set_remove_visible(self, visible: bool) -> None:
+        """Hide the X button when only one row is left (you can't delete it)."""
+        self._remove_btn.setVisible(visible)
+
+
+class _RefinePanel(QFrame):
+    """Multi-problem feedback panel for the refine-with-AI loop.
+
+    Replaces the previous single ``QPlainTextEdit`` with a stack of
+    "Problem N" rows the user can grow with the *+ Add another problem*
+    button (capped at :data:`_MAX_REFINE_PROBLEMS`). On *Refine with AI*
+    we collect every non-empty row, format them into a numbered list
+    ("1) ...\n2) ...") and emit :attr:`refine_clicked` with that string -
+    the existing ``DocumentsPage.refine_requested`` signal carries the
+    same ``str`` payload to the orchestrator, so the backend doesn't need
+    to know that the input shape changed.
+    """
+
+    refine_clicked = Signal(str)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setStyleSheet(
+            f"_RefinePanel {{ background: {Tokens.bg}; "
+            f"border: 1px solid {Tokens.border}; "
+            "border-radius: 8px; }}"
+        )
+        self._rows: list[_ProblemRow] = []
+        self._busy = False
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(12, 10, 12, 10)
+        outer.setSpacing(8)
+
+        self._rows_layout = QVBoxLayout()
+        self._rows_layout.setContentsMargins(0, 0, 0, 0)
+        self._rows_layout.setSpacing(6)
+        outer.addLayout(self._rows_layout)
+
+        bar = QHBoxLayout()
+        bar.setContentsMargins(0, 0, 0, 0)
+        bar.setSpacing(8)
+        self._add_btn = QPushButton(t("docs.refine.add_problem"))
+        self._add_btn.setToolTip(t("docs.refine.add_problem_tip"))
+        self._add_btn.setProperty("variant", "ghost")
+        self._add_btn.clicked.connect(self._on_add)
+        bar.addWidget(self._add_btn)
+        bar.addStretch(1)
+        self._refine_btn = QPushButton(t("docs.refine.button"))
+        self._refine_btn.setProperty("variant", "primary")
+        self._refine_btn.setMinimumWidth(150)
+        self._refine_btn.clicked.connect(self._on_submit)
+        bar.addWidget(self._refine_btn)
+        outer.addLayout(bar)
+
+        self._add_row()  # always start with one problem visible
+
+    # ----- internal helpers
+    def _add_row(self) -> _ProblemRow:
+        row = _ProblemRow(index=len(self._rows))
+        row.remove_requested.connect(self._on_remove)
+        self._rows.append(row)
+        self._rows_layout.addWidget(row)
+        self._refresh_chrome()
+        return row
+
+    def _refresh_chrome(self) -> None:
+        # Renumber + show/hide the X button + grey the Add button when at cap.
+        for i, row in enumerate(self._rows):
+            row.set_index(i)
+            row.set_remove_visible(len(self._rows) > 1)
+        at_cap = len(self._rows) >= _MAX_REFINE_PROBLEMS
+        self._add_btn.setEnabled(not at_cap and not self._busy)
+
+    def _on_add(self) -> None:
+        if self._busy or len(self._rows) >= _MAX_REFINE_PROBLEMS:
+            return
+        self._add_row()
+
+    def _on_remove(self, row: _ProblemRow) -> None:
+        if self._busy or len(self._rows) <= 1:
+            return
+        try:
+            self._rows.remove(row)
+        except ValueError:
+            return
+        self._rows_layout.removeWidget(row)
+        row.setParent(None)
+        row.deleteLater()
+        self._refresh_chrome()
+
+    def _on_submit(self) -> None:
+        # Strip blanks, drop empty rows, then number what's left so the AI
+        # sees a clean ordered list. We keep the user's original ordering
+        # so a "Problem 1" feedback ends up first regardless of insertion
+        # order quirks.
+        items = [r.text() for r in self._rows if r.text()]
+        if not items:
+            QMessageBox.information(
+                self,
+                t("docs.refine.empty_warning_title"),
+                t("docs.refine.empty_warning_body"),
+            )
+            return
+        formatted = "\n".join(f"{i + 1}) {text}" for i, text in enumerate(items))
+        self.refine_clicked.emit(formatted)
+
+    # ----- public API used by DocumentsPage
+    def set_busy(self, busy: bool) -> None:
+        self._busy = busy
+        self._refine_btn.setEnabled(not busy)
+        for row in self._rows:
+            row.set_busy(busy)
+        self._refresh_chrome()
+
+    def reset_to_single_problem(self) -> None:
+        """Drop every extra row + clear the first one; called after refine ends.
+
+        Keeping just one empty row is the same starting state the user
+        first saw, so the panel is immediately ready for the next round
+        without any leftover text from the previous feedback.
+        """
+        # Remove every row beyond the first; the first one is just cleared.
+        for row in list(self._rows[1:]):
+            self._rows.remove(row)
+            self._rows_layout.removeWidget(row)
+            row.setParent(None)
+            row.deleteLater()
+        if self._rows:
+            self._rows[0].clear()
+        else:
+            self._add_row()
+        self._refresh_chrome()
+
+
 class DocumentsPage(QWidget):
     save_analysis_clicked = Signal()
     back_clicked = Signal()
@@ -87,29 +294,9 @@ class DocumentsPage(QWidget):
         body_layout.addWidget(self._tabs, stretch=1)
         self._modern_resume_html: str = ""
 
-        refine_frame = QFrame()
-        refine_frame.setStyleSheet(
-            f"QFrame {{ background: {Tokens.bg}; "
-            f"border: 1px solid {Tokens.border}; "
-            "border-radius: 8px; }}"
-        )
-        refine_layout = QHBoxLayout(refine_frame)
-        refine_layout.setContentsMargins(12, 8, 12, 8)
-        refine_layout.setSpacing(8)
-        self._refine_input = QPlainTextEdit()
-        self._refine_input.setPlaceholderText(t("docs.refine.placeholder"))
-        self._refine_input.setMaximumHeight(60)
-        self._refine_input.setStyleSheet(
-            "QPlainTextEdit { border: 1px solid #CBD5E1; "
-            "border-radius: 6px; padding: 4px; font-size: 12px; }"
-        )
-        refine_layout.addWidget(self._refine_input, stretch=1)
-        self._refine_btn = QPushButton(t("docs.refine.button"))
-        self._refine_btn.setProperty("variant", "primary")
-        self._refine_btn.setMinimumWidth(130)
-        self._refine_btn.clicked.connect(self._on_refine_clicked)
-        refine_layout.addWidget(self._refine_btn)
-        body_layout.addWidget(refine_frame)
+        self._refine_panel = _RefinePanel()
+        self._refine_panel.refine_clicked.connect(self._on_refine_clicked)
+        body_layout.addWidget(self._refine_panel)
 
         self._status = QLabel("")
         self._status.setStyleSheet(f"color: {Tokens.text_muted}; font-size: 12px;")
@@ -246,20 +433,21 @@ class DocumentsPage(QWidget):
         except OSError as exc:
             QMessageBox.critical(self, t("docs.error.export_title"), str(exc))
 
-    def _on_refine_clicked(self) -> None:
-        feedback = self._refine_input.toPlainText().strip()
+    def _on_refine_clicked(self, feedback: str) -> None:
+        # ``feedback`` is the formatted "1) ...\n2) ..." string built by the
+        # multi-problem panel. Empty payloads are filtered out by the panel
+        # itself (see :meth:`_RefinePanel._on_submit`), so by the time we
+        # receive the signal we can pass it straight to the orchestrator.
         if not feedback:
             return
-        self._refine_btn.setEnabled(False)
-        self._refine_input.setReadOnly(True)
+        self._refine_panel.set_busy(True)
         self.refine_requested.emit(feedback)
 
     def set_refine_enabled(self, enabled: bool) -> None:
         """Re-enable the refine panel after a refinement completes or fails."""
-        self._refine_btn.setEnabled(enabled)
-        self._refine_input.setReadOnly(not enabled)
+        self._refine_panel.set_busy(not enabled)
         if enabled:
-            self._refine_input.clear()
+            self._refine_panel.reset_to_single_problem()
 
     # ----------------------------------------------------------- public
     def load_package(self, package: GeneratedApplicationPackage) -> None:
