@@ -41,13 +41,30 @@ _PATTERNS: tuple[_Pattern, ...] = (
        "quality engineer", "software tester", "qa analyst", "tester",
        "qa", "quality assurance"),
 
-    # ---- AI / ML ----------------------------------------------------------
+    # ---- AI / ML (juniors first, then specific GenAI / AI SWE before
+    #      generic ML to avoid accidentally bucketing "AI Software
+    #      Engineer at Microsoft" into machine_learning_engineer) ---------
     _p("junior_ai_engineer",
        "junior ai engineer", "junior genai engineer", "junior llm engineer",
        "junior ml engineer", "junior machine learning"),
+    # GenAI / LLM application engineering: people who BUILD WITH foundation
+    # models (RAG, agents, prompt pipelines) rather than train them.
+    _p("genai_engineer",
+       "genai engineer", "gen ai engineer", "generative ai engineer",
+       "llm engineer", "llm application engineer", "llm software engineer",
+       "prompt engineer", "ai application engineer", "applied genai",
+       "ai agent engineer"),
+    # AI Software Engineer: shipping AI-powered features inside a product
+    # codebase. Sits between pure ML research and standard SWE - we model
+    # it as its own persona so the prompt can lean on both flavours.
+    _p("ai_software_engineer",
+       "ai software engineer", "ai/ml software engineer",
+       "ai engineer software", "machine learning software engineer",
+       "ml software engineer", "ai-focused software engineer",
+       "ai platform engineer", "ai infrastructure engineer"),
     _p("machine_learning_engineer",
        "ml engineer", "machine learning engineer", "ai engineer",
-       "genai engineer", "llm engineer", "applied ai", "applied scientist"),
+       "applied ai", "applied scientist"),
 
     # ---- Python / generic dev (junior first) ------------------------------
     _p("junior_python_developer",
@@ -90,6 +107,14 @@ _PATTERNS: tuple[_Pattern, ...] = (
     _p("security_engineer",
        "security engineer", "application security", "appsec",
        "security analyst"),
+
+    # ---- Generic mid/senior software engineer (LAST so all the more
+    #      specific buckets above always win first) ---------------------
+    _p("software_engineer",
+       "software engineer", "software developer", "senior software engineer",
+       "senior software developer", "staff engineer", "staff software engineer",
+       "principal engineer", "principal software engineer",
+       "lead software engineer", "tech lead", "engineering manager"),
 )
 
 #: Heuristic words that, if present, make us promote a non-IT-looking title to

@@ -27,14 +27,20 @@ from src.services.profile_dedup import (
     _canonicalise_language_name,
     _dedup_certifications,
     _dedup_languages,
+    _is_combined_company,
     _names_match,
     _normalize_cert_name,
     _normalize_name,
     _parse_year_range,
     _periods_are_equivalent,
+    _split_combined_company,
+    _structural_choice_kind,
+    apply_structural_choice,
     build_date_conflict_questions,
     build_source_discrepancy_questions,
+    build_structural_mismatch_questions,
     dedup_profile,
+    detect_structural_mismatches,
     excluded_ids_from_answers,
     filter_profile_entries,
 )
@@ -817,3 +823,148 @@ def test_dedup_profile_collapses_certifications_and_languages():
     deduped = dedup_profile(profile)
     assert len(deduped.certifications) == 2
     assert deduped.spoken_languages == ["Czech", "English"]
+
+
+# ---------------------------------------------------------------------------
+# Structural mismatch (CV combines N companies vs LinkedIn splits them)
+# ---------------------------------------------------------------------------
+
+def test_split_combined_company_handles_interpunct_separator():
+    assert _split_combined_company("CreatiWeb · AppYours · IBM") == [
+        "CreatiWeb", "AppYours", "IBM",
+    ]
+
+
+def test_split_combined_company_handles_comma_and_pipe():
+    assert _split_combined_company("Acme, Globex | Initech") == [
+        "Acme", "Globex", "Initech",
+    ]
+
+
+def test_split_combined_company_returns_single_for_normal_name():
+    assert _split_combined_company("Gen Digital s.r.o.") == ["Gen Digital s.r.o."]
+
+
+def test_is_combined_company_detects_multi_brand_string():
+    assert _is_combined_company("CreatiWeb · AppYours · IBM")
+    assert not _is_combined_company("Microsoft")
+    # Trademarks like "C++" must not split on the bare "+".
+    assert not _is_combined_company("C++ Studio")
+
+
+def _make_combined_cv_and_linkedin_profile() -> CandidateProfile:
+    """Reproduce the user's CreatiWeb / IBM scenario.
+
+    CV row (source='cv'): 'CreatiWeb · AppYours · IBM (school internships) 2019-2020'
+    LinkedIn rows (source='linkedin'): 'CreatiWeb' 2020 + 'IBM' 2019
+    """
+    cv = WorkExperience(
+        id="exp-cv-combined",
+        title="Developer (Python · Chatbot · Game dev)",
+        company="CreatiWeb · AppYours · IBM",
+        period="2019 - 2020",
+        bullets=["Python game dev", "IBM Watson chatbot"],
+        source="cv",
+    )
+    li_creatiweb = WorkExperience(
+        id="exp-li-creatiweb",
+        title="Vývojář Python",
+        company="CreatiWeb s.r.o.",
+        period="06/2020 - 08/2020",
+        bullets=["Přepis .PO souborů"],
+        source="linkedin",
+    )
+    li_ibm = WorkExperience(
+        id="exp-li-ibm",
+        title="Stážista vývojář",
+        company="IBM",
+        period="05/2019 - 06/2019",
+        bullets=["Vývoj chatbota v IBM Watson"],
+        source="linkedin",
+    )
+    return CandidateProfile(
+        full_name="Test",
+        experience=[cv, li_creatiweb, li_ibm],
+    )
+
+
+def test_detect_structural_mismatches_finds_creatiweb_ibm_pair():
+    profile = _make_combined_cv_and_linkedin_profile()
+    findings = detect_structural_mismatches(profile)
+    assert len(findings) == 1
+    cv, linkedin_rows = findings[0]
+    assert cv.id == "exp-cv-combined"
+    matched_ids = sorted(li.id for li in linkedin_rows)
+    assert matched_ids == ["exp-li-creatiweb", "exp-li-ibm"]
+
+
+def test_detect_structural_mismatches_skips_when_only_one_match():
+    """A single-company CV row with one matching LinkedIn row is the regular
+    duplicate scenario - the existing date-conflict question covers it."""
+    cv = WorkExperience(
+        id="exp-cv",
+        title="Dev",
+        company="Acme · Beta",
+        period="2020 - 2021",
+        source="cv",
+    )
+    li = WorkExperience(
+        id="exp-li",
+        title="Dev",
+        company="Acme",
+        period="2020 - 2021",
+        source="linkedin",
+    )
+    profile = CandidateProfile(full_name="X", experience=[cv, li])
+    assert detect_structural_mismatches(profile) == []
+
+
+def test_build_structural_mismatch_questions_emits_struct_id():
+    profile = _make_combined_cv_and_linkedin_profile()
+    questions = build_structural_mismatch_questions(profile)
+    assert len(questions) == 1
+    q = questions[0]
+    assert q.id == "discrepancy:struct:exp-cv-combined"
+    assert q.answer_type == "single_choice"
+    # Three options: split / merge / manual (text varies by UI language but
+    # we always have exactly three).
+    assert len(q.options) == 3
+
+
+def test_structural_choice_kind_classifies_split_merge_manual():
+    assert _structural_choice_kind("Split into separate entries") == "split"
+    assert _structural_choice_kind("Rozdělit na samostatné záznamy") == "split"
+    assert _structural_choice_kind("Keep as one combined entry") == "merge"
+    assert _structural_choice_kind("Nechat jako jeden společný záznam") == "merge"
+    assert _structural_choice_kind("Other - I'll edit") == "manual"
+    assert _structural_choice_kind("Jiné") == "manual"
+    assert _structural_choice_kind("") == "manual"
+
+
+def test_apply_structural_choice_split_drops_combined_cv_row():
+    profile = _make_combined_cv_and_linkedin_profile()
+    apply_structural_choice(profile, "exp-cv-combined", "Split into separate entries")
+    ids = [e.id for e in profile.experience]
+    assert "exp-cv-combined" not in ids
+    assert sorted(ids) == ["exp-li-creatiweb", "exp-li-ibm"]
+
+
+def test_apply_structural_choice_merge_drops_linkedin_rows():
+    profile = _make_combined_cv_and_linkedin_profile()
+    apply_structural_choice(profile, "exp-cv-combined", "Keep as one combined entry")
+    ids = [e.id for e in profile.experience]
+    assert ids == ["exp-cv-combined"]
+
+
+def test_apply_structural_choice_manual_is_noop():
+    profile = _make_combined_cv_and_linkedin_profile()
+    apply_structural_choice(profile, "exp-cv-combined", "Other - I'll edit later")
+    ids = sorted(e.id for e in profile.experience)
+    assert ids == ["exp-cv-combined", "exp-li-creatiweb", "exp-li-ibm"]
+
+
+def test_apply_structural_choice_unknown_id_is_safe_noop():
+    profile = _make_combined_cv_and_linkedin_profile()
+    apply_structural_choice(profile, "no-such-id", "split")
+    ids = sorted(e.id for e in profile.experience)
+    assert ids == ["exp-cv-combined", "exp-li-creatiweb", "exp-li-ibm"]

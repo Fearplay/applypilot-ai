@@ -219,12 +219,15 @@ class DocumentsPage(QWidget):
 
     # ----------------------------------------------------------- public
     def load_package(self, package: GeneratedApplicationPackage) -> None:
-        self._resume_edit.setPlainText(resume_to_markdown(package.tailored_resume))
+        docs_lang = package.output_language or "en"
+        self._resume_edit.setPlainText(
+            resume_to_markdown(package.tailored_resume, output_language=docs_lang)
+        )
         self._set_modern_resume_html(
             tailored_resume_to_styled_html(
                 package.tailored_resume,
                 package.candidate_profile,
-                output_language=package.output_language,
+                output_language=docs_lang,
             )
         )
         self._cover_edit.setPlainText(cover_letter_to_markdown(package.cover_letter))

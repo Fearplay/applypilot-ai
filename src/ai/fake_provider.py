@@ -35,6 +35,7 @@ from ..models.match import (
     CategoryScores,
     ClarifyingQuestion,
     MatchReport,
+    SuggestedRemoval,
 )
 from .base import BaseAIProvider
 from .role_detector import detect_role_type
@@ -143,6 +144,33 @@ _ROLE_REQS: dict[RoleType, tuple[list[str], list[str], list[str], list[str]]] = 
         ["Python", "scikit-learn", "PyTorch", "MLflow", "Docker"],
         ["machine learning", "Python", "PyTorch", "MLOps", "model deployment"],
     ),
+    "ai_software_engineer": (
+        ["Python OR TypeScript", "LLM SDKs (OpenAI / Anthropic)",
+         "REST APIs", "Git", "Testing", "CI/CD"],
+        ["RAG", "Vector database (pgvector / FAISS / Pinecone)",
+         "Evaluation harness", "Observability for AI", "Prompt versioning"],
+        ["Python", "OpenAI API", "FastAPI", "Docker", "pgvector"],
+        ["AI software engineer", "LLM", "RAG", "Python", "FastAPI",
+         "vector database", "production"],
+    ),
+    "genai_engineer": (
+        ["Python", "Foundation model APIs (OpenAI / Anthropic / Bedrock)",
+         "Prompt engineering", "RAG"],
+        ["Agent frameworks (LangChain / LlamaIndex)", "Vector store",
+         "Eval frameworks (ragas / deepeval)", "Tool / function calling"],
+        ["Python", "OpenAI", "LangChain", "FAISS", "ragas"],
+        ["GenAI", "LLM", "RAG", "agents", "prompt engineering",
+         "vector database"],
+    ),
+    "software_engineer": (
+        ["Production language (Python / Java / Go / TypeScript / C# ...)",
+         "REST APIs", "SQL", "Git", "Unit testing", "Code review"],
+        ["System design", "Docker", "CI/CD", "Observability",
+         "Mentoring"],
+        ["Python", "Java", "PostgreSQL", "Docker", "GitHub Actions"],
+        ["software engineering", "system design", "REST API", "SQL",
+         "testing", "CI/CD"],
+    ),
     "mobile_developer": (
         ["Mobile platform (iOS/Android/Flutter/RN)", "Git", "Testing"],
         ["CI for mobile", "Push notifications", "Offline support"],
@@ -231,6 +259,42 @@ _QUESTION_BANK: dict[RoleType, list[tuple[str, str, str]]] = {
         ("structured", "Have you used structured outputs / function calling for reliability?",
          "Structured outputs reduce hallucination."),
     ],
+    "ai_software_engineer": [
+        ("llm_prod", "Have you shipped an LLM-powered feature to real users (not just a notebook)?",
+         "Production AI features are the core of this role."),
+        ("eval", "Have you built an evaluation harness (manual, golden set or automated) for an AI feature?",
+         "Eval discipline separates demos from products."),
+        ("rag_prod", "Have you operated a RAG pipeline in production (chunking, retrieval, latency)?",
+         "RAG is a common pattern."),
+        ("guardrails", "Have you implemented guardrails / safety checks around model outputs?",
+         "Hallucination control is required."),
+        ("observability", "Have you instrumented LLM calls for tracing, cost and latency monitoring?",
+         "Observability is part of running AI features at scale."),
+    ],
+    "genai_engineer": [
+        ("agents", "Have you built an agent loop (tool / function calling, multi-step reasoning)?",
+         "Agentic patterns are increasingly common."),
+        ("eval_framework", "Have you used an eval framework like ragas, deepeval, or written your own?",
+         "Eval frameworks are required."),
+        ("vector_choice", "Have you chosen a vector store for a real project and justified the trade-offs?",
+         "Vector store selection is a senior signal."),
+        ("prompt_versioning", "Do you version your prompts (e.g. in git, in a prompt store)?",
+         "Prompt versioning prevents silent regressions."),
+        ("model_swap", "Have you migrated a feature between model providers (e.g. OpenAI to Anthropic)?",
+         "Provider portability matters as costs shift."),
+    ],
+    "software_engineer": [
+        ("system_design", "Have you owned the end-to-end design of a non-trivial feature (API + DB + UI)?",
+         "Senior engineers ship features end-to-end."),
+        ("code_review", "Do you regularly review pull requests from other engineers?",
+         "Code review is a core senior responsibility."),
+        ("on_call", "Have you been on-call or owned production incidents?",
+         "Production ownership is a strong signal."),
+        ("mentoring", "Have you mentored juniors or led a small project team?",
+         "Mentoring is expected at mid+ levels."),
+        ("testing", "Do you write unit and integration tests as part of your normal workflow?",
+         "Testing maturity is required."),
+    ],
     "data_analyst": [
         ("sql", "Have you written multi-join SQL queries?", "SQL is core."),
         ("dashboards", "Have you built dashboards in PowerBI / Tableau / Looker?",
@@ -276,6 +340,88 @@ _EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 _PHONE_RE = re.compile(r"(?:\+?\d[\s\-]?){7,}\d")
 _LINKEDIN_RE = re.compile(r"https?://(?:[a-z]{2,3}\.)?linkedin\.com/[\w\-/.%]+", re.I)
 _GITHUB_RE = re.compile(r"https?://github\.com/[\w\-]+(?:/[\w\-]+)?", re.I)
+
+
+# Roles / employers that are a strong signal of "non-IT side gig" so the
+# offline / fake provider can populate `suggested_removals` without any
+# real reasoning. The match is deliberately broad - the GUI shows the
+# suggestion as a DEFAULT-UNTICKED checkbox, so a false positive is
+# easy for the user to dismiss but a false negative leaves a McDonald's
+# crew job in a Microsoft AI Engineer resume.
+_NON_IT_EMPLOYER_HINTS: tuple[str, ...] = (
+    "mcdonald", "mcdonalds", "mcdonald's", "kfc", "burger king", "subway ",
+    "starbucks", "dunkin", "pizza hut", "domino", "wendy",
+    "albert", "lidl", "tesco", "kaufland", "billa", "globus",
+    "walmart", "target", "costco", "ikea cashier",
+)
+_NON_IT_TITLE_HINTS: tuple[str, ...] = (
+    "crew member", "cashier", "waiter", "waitress", "server",
+    "bartender", "barista", "kitchen helper", "delivery driver",
+    "courier", "newspaper delivery", "shop assistant",
+    "warehouse picker", "warehouse worker", "cleaner",
+    "babysitter", "au pair", "lifeguard", "ski instructor",
+    "fitness instructor",
+)
+_IT_ROLE_TYPES: frozenset[RoleType] = frozenset({
+    "software_qa_engineer", "qa_automation_engineer", "manual_qa_tester",
+    "test_engineer", "junior_python_developer", "junior_software_engineer",
+    "junior_ai_engineer", "data_analyst", "frontend_developer",
+    "backend_developer", "fullstack_developer", "devops_engineer",
+    "data_engineer", "machine_learning_engineer", "ai_software_engineer",
+    "genai_engineer", "software_engineer", "mobile_developer",
+    "site_reliability_engineer", "security_engineer", "cloud_engineer",
+    "other_it",
+})
+
+
+def _looks_non_it(entry_company: str, entry_title: str) -> bool:
+    """Return True when an experience row screams 'unrelated side gig'.
+
+    Checks both the company name and the title against the curated lists.
+    Comparison is case-insensitive and substring-based so 'McDonald's
+    Restaurants Czech Republic' still matches the 'mcdonald' hint.
+    """
+    company = (entry_company or "").lower()
+    title = (entry_title or "").lower()
+    for hint in _NON_IT_EMPLOYER_HINTS:
+        if hint in company:
+            return True
+    for hint in _NON_IT_TITLE_HINTS:
+        if hint in title:
+            return True
+    return False
+
+
+def _build_suggested_removals(
+    job: JobPosting, candidate: CandidateProfile
+) -> list[SuggestedRemoval]:
+    """Heuristic, IT-only suggested removals for the FakeAIProvider.
+
+    Only fires when the target role is an IT role (so we don't accidentally
+    suggest removing a relevant retail job from a retail-manager resume).
+    Caps at 4 entries to mirror the prompt rule for real providers.
+    """
+    if job.role_type not in _IT_ROLE_TYPES:
+        return []
+    out: list[SuggestedRemoval] = []
+    role_label = ROLE_TYPE_LABELS.get(job.role_type, "this IT role")
+    for entry in candidate.experience:
+        if not entry.id:
+            continue
+        if _looks_non_it(entry.company, entry.title):
+            out.append(
+                SuggestedRemoval(
+                    entry_id=entry.id,
+                    section="experience",
+                    reason=(
+                        f"'{entry.title} @ {entry.company}' looks unrelated to "
+                        f"{role_label}. Consider removing or condensing."
+                    ),
+                )
+            )
+        if len(out) >= 4:
+            break
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -572,6 +718,8 @@ class FakeAIProvider(BaseAIProvider):
                     )
                 )
 
+        suggested_removals = _build_suggested_removals(job, candidate)
+
         return MatchReport(
             overall_score=max(0, min(overall, 100)),
             category_scores=CategoryScores(
@@ -598,6 +746,7 @@ class FakeAIProvider(BaseAIProvider):
                 f"{len(job.required_skills + job.nice_to_have_skills)} required + "
                 f"nice-to-have skills for the {ROLE_TYPE_LABELS.get(job.role_type, 'role')}."
             ),
+            suggested_removals=suggested_removals,
         )
 
     # ------------------------------------------------------------ resume
@@ -904,6 +1053,84 @@ def _interview_bank(role: RoleType) -> list[tuple[str, str, str, str]]:
             ("Tell me about a small LLM project you built.",
              "Probe initiative.",
              "Describe goal, stack, surprising lessons.",
+             "behavioural"),
+        ],
+        "ai_software_engineer": [
+            ("Walk me through an AI feature you shipped to production.",
+             "Probe end-to-end ownership of a real AI product.",
+             "Problem, model choice, prompt design, eval set, rollout, monitoring.",
+             "technical"),
+            ("How do you write tests for non-deterministic LLM output?",
+             "Probe testing maturity in an AI codebase.",
+             "Snapshot tests, golden sets, ragas-style metrics, schema validation.",
+             "technical"),
+            ("How do you reason about cost / latency trade-offs of model calls?",
+             "Probe production thinking.",
+             "Caching, smaller model fallback, streaming, batching, async.",
+             "technical"),
+            ("How do you keep prompts versioned and reviewable?",
+             "Probe engineering discipline.",
+             "Prompts in git with diff-friendly format, eval on PR, prompt store.",
+             "process"),
+            ("Tell me about a hallucination bug you debugged.",
+             "Probe practical AI debugging.",
+             "Reproduce, narrow input, add guardrail or RAG citation, regression test.",
+             "behavioural"),
+            ("How do you decide when an AI feature is good enough to ship?",
+             "Probe product judgement.",
+             "Eval thresholds, human-in-the-loop, gradual rollout, kill switch.",
+             "process"),
+        ],
+        "genai_engineer": [
+            ("Compare RAG and fine-tuning for adding domain knowledge.",
+             "Probe deep GenAI judgement.",
+             "RAG: cheap, dynamic, citable. Fine-tune: better style, costlier.",
+             "technical"),
+            ("How do you design an evaluation harness for a RAG system?",
+             "Probe eval rigour.",
+             "Golden questions, retrieval metrics, generation metrics, ragas.",
+             "technical"),
+            ("Walk through an agent loop you built.",
+             "Probe agent design.",
+             "Tools, planner / executor, memory, termination criteria, traces.",
+             "technical"),
+            ("How do you protect against prompt injection?",
+             "Probe security awareness.",
+             "Untrusted input segregation, system-prompt hardening, output filters.",
+             "technical"),
+            ("How do you choose a vector database?",
+             "Probe pragmatism.",
+             "Scale, filter requirements, ops cost, hosted vs self-managed.",
+             "technical"),
+            ("How do you migrate a feature from one model provider to another?",
+             "Probe portability planning.",
+             "Eval parity test, abstraction layer, gradual rollout, A/B.",
+             "process"),
+        ],
+        "software_engineer": [
+            ("Walk me through the design of a feature you owned end-to-end.",
+             "Probe system design depth.",
+             "Requirements, API, data model, scaling, failure modes.",
+             "technical"),
+            ("How do you approach code review?",
+             "Probe craft and collaboration.",
+             "Read tests first, ask questions, focus on design > nits.",
+             "process"),
+            ("Tell me about a production incident you helped resolve.",
+             "Probe production maturity.",
+             "Detect, mitigate, root-cause, post-mortem, follow-ups.",
+             "behavioural"),
+            ("How do you balance shipping speed with code quality?",
+             "Probe pragmatism.",
+             "Risk-weighted decisions, small PRs, feature flags, tests where it matters.",
+             "process"),
+            ("How do you mentor a more junior engineer?",
+             "Probe leadership.",
+             "Pair, set goals, review work, unblock, model behaviour.",
+             "behavioural"),
+            ("Describe a time you disagreed with a senior decision.",
+             "Probe collaboration.",
+             "Disagree-and-commit, surface data, escalate respectfully.",
              "behavioural"),
         ],
     }

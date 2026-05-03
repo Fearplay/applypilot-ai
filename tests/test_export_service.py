@@ -203,6 +203,11 @@ def test_styled_html_does_not_double_encode_ampersand_in_section_labels():
     it became ``"Certifikáty &amp;amp; kurzy"`` in the rendered HTML.
     Now that the dictionary holds a plain ``&`` we must see ``&amp;``
     exactly once and never the double-encoded ``&amp;amp;``.
+
+    Skill GROUP labels (``CI/CD & Tooling``) stay in English regardless of
+    the resume language - only structural sidebar headers and language /
+    location names get translated. Double-encoding regression must still
+    not happen on those English labels.
     """
     resume = TailoredResume(
         name="Jana Nováková",
@@ -216,8 +221,9 @@ def test_styled_html_does_not_double_encode_ampersand_in_section_labels():
     html = tailored_resume_to_styled_html(resume, output_language="cs")
     assert "&amp;amp;" not in html
     assert "Certifikáty &amp; kurzy" in html
-    assert "CI/CD &amp; nástroje" in html or "CI/CD &amp;" not in html
-    # Double-encoded would have looked like "CI/CD &amp;amp; nástroje".
+    # Skill group label is rendered in English (option-A localisation policy).
+    assert "CI/CD &amp; Tooling" in html
+    # Double-encoded would have looked like "CI/CD &amp;amp; Tooling".
     assert "CI/CD &amp;amp;" not in html
 
 
@@ -282,3 +288,136 @@ def test_resume_to_markdown_strips_em_and_en_dashes():
     assert "\u201c" not in md and "\u201d" not in md
     assert "QA engineer - 4 years - Playwright fan." in md
     assert 'Built "awesome" test suites ...' in md
+
+
+def test_styled_html_sidebar_uses_cs_language_names_for_czech_resume():
+    """When `output_language='cs'` the spoken-language names rendered in
+    the sidebar are translated to lowercase Czech (čeština / angličtina /
+    slovenština / němčina) instead of the canonical English labels.
+    """
+    resume = TailoredResume(
+        name="Jana Nováková",
+        professional_summary="Testerka.",
+        technical_skills=["Python"],
+        role_targeted_for="QA",
+    )
+    candidate = CandidateProfile(
+        full_name="Jana Nováková",
+        spoken_languages=["Czech", "English", "Slovak", "German"],
+    )
+    html = tailored_resume_to_styled_html(resume, candidate, output_language="cs")
+    # CS translations must be present.
+    for cs_name in ("čeština", "angličtina", "slovenština", "němčina"):
+        assert cs_name in html, f"missing {cs_name!r} in CS resume sidebar"
+    # And the canonical English form should NOT survive verbatim in the
+    # sidebar (it might still appear elsewhere, but not as a language row).
+    assert "<span>Czech</span>" not in html
+    assert "<span>English</span>" not in html
+
+
+def test_styled_html_sidebar_keeps_english_language_names_for_english_resume():
+    """English resumes keep the canonical English language names verbatim -
+    the CS translation must not leak into an EN render.
+    """
+    resume = TailoredResume(
+        name="John Doe",
+        professional_summary="QA engineer.",
+        technical_skills=["Python"],
+        role_targeted_for="QA",
+    )
+    candidate = CandidateProfile(
+        full_name="John Doe",
+        spoken_languages=["Czech", "English"],
+    )
+    html = tailored_resume_to_styled_html(resume, candidate, output_language="en")
+    assert "<span>Czech</span>" in html
+    assert "<span>English</span>" in html
+    assert "čeština" not in html
+    assert "angličtina" not in html
+
+
+def test_styled_html_sidebar_localises_location_for_czech_resume():
+    """Common English place names ("Prague, Czech Republic") must render in
+    Czech ("Praha, Česká republika") when the resume language is CS.
+    """
+    resume = TailoredResume(
+        name="Jana Nováková",
+        professional_summary="Testerka.",
+        technical_skills=["Python"],
+        role_targeted_for="QA",
+    )
+    candidate = CandidateProfile(
+        full_name="Jana Nováková",
+        location="Prague, Czech Republic",
+    )
+    html = tailored_resume_to_styled_html(resume, candidate, output_language="cs")
+    assert "Praha" in html
+    assert "Česká republika" in html
+    # Original English form must NOT appear next to the @-icon contact line.
+    assert "Prague, Czech Republic" not in html
+
+
+def test_styled_html_sidebar_keeps_location_unchanged_for_english_resume():
+    resume = TailoredResume(
+        name="John Doe",
+        professional_summary="QA engineer.",
+        technical_skills=["Python"],
+        role_targeted_for="QA",
+    )
+    candidate = CandidateProfile(
+        full_name="John Doe",
+        location="Prague, Czech Republic",
+    )
+    html = tailored_resume_to_styled_html(resume, candidate, output_language="en")
+    assert "Prague, Czech Republic" in html
+    assert "Praha" not in html
+
+
+def test_styled_html_sidebar_uses_technologie_label_for_czech():
+    """``Tech Stack`` must render as ``Technologie`` in CS mode (was the
+    English ``Tech Stack`` literal even in CS resumes before this fix)."""
+    resume = TailoredResume(
+        name="Jana Nováková",
+        professional_summary="Testerka.",
+        technical_skills=["Python", "Playwright"],
+        role_targeted_for="QA",
+    )
+    html_cs = tailored_resume_to_styled_html(resume, output_language="cs")
+    assert "Technologie" in html_cs
+    assert "Tech Stack" not in html_cs
+
+    html_en = tailored_resume_to_styled_html(resume, output_language="en")
+    assert "Tech Stack" in html_en
+    assert "Technologie" not in html_en
+
+
+def test_resume_to_markdown_localises_section_headers_for_czech():
+    """``resume_to_markdown(..., output_language='cs')`` must use Czech
+    section headers so the .md file matches the styled HTML wording."""
+    from src.services.export_service import resume_to_markdown
+
+    resume = TailoredResume(
+        name="Jana Nováková",
+        professional_summary="Testerka.",
+        technical_skills=["Python"],
+        experience=[
+            ResumeSection(
+                title="Senior QA",
+                subtitle="Gen Digital",
+                bullets=[ResumeBullet(text="Vedl jsem tým automatizace.")],
+            )
+        ],
+        certifications=["ISTQB Foundation"],
+        role_targeted_for="QA",
+    )
+    md_cs = resume_to_markdown(resume, output_language="cs")
+    assert "## Profesionální shrnutí" in md_cs
+    assert "## Technické dovednosti" in md_cs
+    assert "## Pracovní zkušenosti" in md_cs
+    assert "## Certifikáty" in md_cs
+
+    md_en = resume_to_markdown(resume, output_language="en")
+    assert "## Professional Summary" in md_en
+    assert "## Technical Skills" in md_en
+    assert "## Experience" in md_en
+    assert "## Certifications" in md_en

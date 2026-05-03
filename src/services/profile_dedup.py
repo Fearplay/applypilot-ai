@@ -998,10 +998,235 @@ def filter_profile_entries(
     })
 
 
+# ---------------------------------------------------------------------------
+# Structural mismatch (CV combines N companies vs. LinkedIn splits them)
+# ---------------------------------------------------------------------------
+
+# Separators we treat as "this is a list of companies, not a single brand".
+# Order matters: bullets / interpuncts come first so they don't get
+# accidentally caught by the more aggressive comma split. ``" / "`` and
+# ``" + "`` need surrounding spaces to avoid splitting URLs (``a/b``) and
+# trademarks (``C++``).
+_COMBINED_COMPANY_SPLIT_RE = re.compile(
+    r"\s*(?:·|•|\u2027|\|| / | \+ |, | & | and )\s*",
+    re.IGNORECASE,
+)
+
+
+def _split_combined_company(name: str) -> list[str]:
+    """Return the list of company names found inside ``name``.
+
+    Returns a list of length one when no separator is found, so callers can
+    safely treat the result as "candidate sub-companies".  Empty fragments
+    (e.g. trailing comma) are dropped, and each fragment is whitespace-
+    stripped. The original ordering is preserved so downstream code can
+    still attribute bullets in the order the user wrote them.
+    """
+    if not name:
+        return []
+    parts = [p.strip() for p in _COMBINED_COMPANY_SPLIT_RE.split(name)]
+    return [p for p in parts if p]
+
+
+def _is_combined_company(name: str) -> bool:
+    """``True`` when ``name`` looks like multiple companies merged into one
+    string (``"CreatiWeb · AppYours · IBM"``)."""
+    parts = _split_combined_company(name)
+    return len(parts) >= 2
+
+
+def detect_structural_mismatches(
+    profile: CandidateProfile,
+) -> list[tuple[WorkExperience, list[WorkExperience]]]:
+    """Find CV entries that lump multiple companies together when LinkedIn
+    has the same period broken into separate rows.
+
+    Returns a list of ``(cv_entry, [linkedin_entry, ...])`` tuples. The
+    LinkedIn entries in the inner list are the rows whose company name
+    matches one of the sub-companies parsed out of ``cv_entry.company`` AND
+    whose date range overlaps the CV period. Only emits a pair when:
+
+    * the CV entry's source is exactly ``"cv"`` (i.e. dedup didn't already
+      merge it with a LinkedIn twin),
+    * the company string contains a recognised list separator,
+    * at least TWO matching LinkedIn entries exist (single-company splits
+      aren't really a mismatch worth bothering the user about - the
+      regular date-conflict question can already cover those),
+    * none of the CV's sub-companies are already represented inside that
+      same CV row by virtue of merging (defensive guard against double-asks).
+    """
+    findings: list[tuple[WorkExperience, list[WorkExperience]]] = []
+    for cv_entry in profile.experience:
+        if cv_entry.source != "cv":
+            continue
+        if not _is_combined_company(cv_entry.company):
+            continue
+        sub_companies = _split_combined_company(cv_entry.company)
+        cv_range = _parse_year_range(cv_entry.period)
+        matches: list[WorkExperience] = []
+        for li_entry in profile.experience:
+            if li_entry is cv_entry:
+                continue
+            if li_entry.source not in ("linkedin", "both"):
+                continue
+            if not li_entry.company:
+                continue
+            li_range = _parse_year_range(li_entry.period)
+            if not _ranges_overlap(cv_range, li_range):
+                continue
+            for sub in sub_companies:
+                if _names_match(sub, li_entry.company):
+                    matches.append(li_entry)
+                    break
+        if len(matches) >= 2:
+            findings.append((cv_entry, matches))
+    return findings
+
+
+def _structural_mismatch_question(
+    *,
+    cv_entry: WorkExperience,
+    linkedin_entries: list[WorkExperience],
+) -> ClarifyingQuestion:
+    cv_label = _format_experience_label(cv_entry)
+    linkedin_labels = ", ".join(
+        _format_experience_label(li) for li in linkedin_entries
+    )
+    qid = f"discrepancy:struct:{cv_entry.id}"
+    return ClarifyingQuestion(
+        id=qid,
+        skill=None,
+        question=t(
+            "dedup.q.struct_mismatch",
+            cv_label=cv_label,
+            linkedin_labels=linkedin_labels,
+        ),
+        why_it_matters=t("dedup.why.struct_mismatch"),
+        options=[
+            t("dedup.opt.struct_split"),
+            t("dedup.opt.struct_merge"),
+            t("dedup.opt.struct_manual"),
+        ],
+        answer_type="single_choice",
+    )
+
+
+def build_structural_mismatch_questions(
+    profile: CandidateProfile,
+    *,
+    max_questions: int = 3,
+) -> list[ClarifyingQuestion]:
+    """Generate one question per detected structural mismatch.
+
+    The id is ``discrepancy:struct:<cv_entry_id>`` so :func:`apply_structural_choice`
+    can map the answer back to the right CV row. Capped at ``max_questions``
+    to avoid drowning the user when CV and LinkedIn diverge a lot.
+    """
+    findings = detect_structural_mismatches(profile)
+    questions: list[ClarifyingQuestion] = []
+    for cv_entry, linkedin_entries in findings[:max_questions]:
+        questions.append(
+            _structural_mismatch_question(
+                cv_entry=cv_entry, linkedin_entries=linkedin_entries
+            )
+        )
+    return questions
+
+
+def _structural_choice_kind(answer: str) -> str:
+    """Classify the user's free-text answer to a struct_mismatch question.
+
+    Returns one of ``"split"``, ``"merge"``, ``"manual"``. Defaults to
+    ``"manual"`` when the answer can't be matched - that's the safest
+    no-op outcome (the profile stays as-is and the user can edit it later).
+    """
+    text = (answer or "").strip().lower()
+    if not text:
+        return "manual"
+    # Prefix-match on the first localised word of each option ("split"
+    # / "rozdělit", "keep" / "nechat", "other" / "jiné") so we don't have
+    # to compare the full sentence.
+    if text.startswith(("split", "rozdel", "rozděl")):
+        return "split"
+    if text.startswith(("keep", "nechat", "spojit", "merge")):
+        return "merge"
+    if text.startswith(("other", "jiné", "jine")):
+        return "manual"
+    # Fallback: full localised string comparison.
+    if text == t("dedup.opt.struct_split").lower():
+        return "split"
+    if text == t("dedup.opt.struct_merge").lower():
+        return "merge"
+    return "manual"
+
+
+def apply_structural_choice(
+    profile: CandidateProfile,
+    cv_entry_id: str,
+    answer: str,
+) -> CandidateProfile:
+    """Apply the user's structural-mismatch decision to ``profile``.
+
+    * ``split``: drop the combined CV row entirely so only the LinkedIn
+      per-company rows survive (the CV bullets are already redundant with
+      the LinkedIn ones in the typical user case).
+    * ``merge``: drop the matching LinkedIn rows so only the combined CV
+      row remains - the CV row's bullets stay verbatim.
+    * ``manual``: no-op. The user said they'd edit the resume themselves
+      so we leave both representations in the profile.
+
+    Mutates the model in place and returns it for fluent chaining.
+    """
+    kind = _structural_choice_kind(answer)
+    if kind == "manual":
+        return profile
+
+    cv_entry = next(
+        (e for e in profile.experience if e.id == cv_entry_id), None
+    )
+    if cv_entry is None:
+        return profile
+    if not _is_combined_company(cv_entry.company):
+        return profile
+
+    sub_companies = _split_combined_company(cv_entry.company)
+    cv_range = _parse_year_range(cv_entry.period)
+
+    matched_linkedin: list[WorkExperience] = []
+    for li_entry in profile.experience:
+        if li_entry is cv_entry:
+            continue
+        if li_entry.source not in ("linkedin", "both"):
+            continue
+        if not li_entry.company:
+            continue
+        if not _ranges_overlap(cv_range, _parse_year_range(li_entry.period)):
+            continue
+        if any(_names_match(sub, li_entry.company) for sub in sub_companies):
+            matched_linkedin.append(li_entry)
+
+    if not matched_linkedin:
+        return profile
+
+    if kind == "split":
+        profile.experience = [
+            e for e in profile.experience if e is not cv_entry
+        ]
+    elif kind == "merge":
+        ids_to_drop = {id(e) for e in matched_linkedin}
+        profile.experience = [
+            e for e in profile.experience if id(e) not in ids_to_drop
+        ]
+    return profile
+
+
 __all__ = [
     "dedup_profile",
     "build_source_discrepancy_questions",
     "build_date_conflict_questions",
+    "build_structural_mismatch_questions",
+    "detect_structural_mismatches",
+    "apply_structural_choice",
     "excluded_ids_from_answers",
     "filter_profile_entries",
 ]
@@ -1019,4 +1244,7 @@ _TEST_ONLY = (  # noqa: F841 - documentation aid, not used at runtime
     "_canonicalise_language_name",
     "_normalize_cert_name",
     "_periods_are_equivalent",
+    "_split_combined_company",
+    "_is_combined_company",
+    "_structural_choice_kind",
 )
