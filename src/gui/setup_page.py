@@ -18,7 +18,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThreadPool, Signal
+from PySide6.QtCore import QUrl, Qt, QThreadPool, Signal
+from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
@@ -40,7 +41,7 @@ from ..models.candidate import CandidateProfile, GitHubProject
 from ..models.job import JobPosting
 from ..services.github_analyzer import GitHubError, extract_username, fetch_github_projects
 from ..services.job_parser import parse_job
-from ..services.job_url_fetcher import fetch_job_text
+from ..services.job_url_fetcher import JobFetchError, fetch_job_text
 from ..services.linkedin_parser import parse_linkedin_export
 from ..services.profile_builder import build_candidate_profile
 from ..services.resume_parser import parse_resume_file
@@ -72,6 +73,15 @@ class SetupPage(QWidget):
         self._pool = QThreadPool.globalInstance()
         self._current_url: str | None = None
         self._parsed_job: JobPosting | None = None
+        # Set when the orchestrator gates "Run analysis" while it generates
+        # clarifying questions or recomputes the match. None means "no block".
+        self._block_reason: str | None = None
+        # True after the first fetch attempt completed (regardless of
+        # outcome). The "Wrong content" button is hidden until this flips.
+        self._fetch_attempted: bool = False
+        # True while a desktop-UA retry is already in flight, so the user
+        # can't queue several retries with rapid clicks.
+        self._retry_in_flight: bool = False
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -154,7 +164,22 @@ class SetupPage(QWidget):
         self._fetch_btn = QPushButton(t("setup.job.fetch"))
         self._fetch_btn.clicked.connect(self._on_fetch_clicked)
         url_row.addWidget(self._fetch_btn)
+        self._wrong_content_btn = QPushButton(t("setup.job.wrong"))
+        self._wrong_content_btn.setProperty("variant", "ghost")
+        self._wrong_content_btn.setToolTip(t("setup.job.wrong.tip"))
+        self._wrong_content_btn.clicked.connect(self._on_wrong_content_clicked)
+        self._wrong_content_btn.setVisible(False)
+        url_row.addWidget(self._wrong_content_btn)
         card.add_layout(url_row)
+
+        self._js_hint_lbl = QLabel(t("setup.job.js_needed_hint"))
+        self._js_hint_lbl.setWordWrap(True)
+        self._js_hint_lbl.setStyleSheet(
+            f"color: {Tokens.text_muted}; font-size: 11px; "
+            "font-style: italic; padding: 2px 0px;"
+        )
+        self._js_hint_lbl.setVisible(False)
+        card.add_widget(self._js_hint_lbl)
 
         self._desc = QPlainTextEdit()
         self._desc.setPlaceholderText(t("setup.job.text_placeholder"))
@@ -237,9 +262,35 @@ class SetupPage(QWidget):
         self._status_lbl.setText(text)
 
     def set_busy(self, busy: bool) -> None:
-        self._run_btn.setEnabled(not busy)
         self._sample_btn.setEnabled(not busy)
-        self._fetch_btn.setEnabled(not busy)
+        self._fetch_btn.setEnabled(not busy and not self._retry_in_flight)
+        # When externally blocked the run button stays disabled regardless.
+        self._refresh_run_button_enabled(busy=busy)
+
+    def set_analysis_blocked(self, reason: str | None) -> None:
+        """Disable the *Run analysis* button while the orchestrator is busy.
+
+        ``reason`` is shown both as a tooltip on the button and as the
+        primary status line. ``None`` clears the block. The button is also
+        forced into the disabled state regardless of any local "busy" flag,
+        so the orchestrator's view of the world always wins.
+        """
+        self._block_reason = reason or None
+        if reason:
+            self._run_btn.setToolTip(reason)
+            self.set_status(reason)
+        else:
+            self._run_btn.setToolTip("")
+        self._refresh_run_button_enabled()
+
+    def _refresh_run_button_enabled(self, *, busy: bool | None = None) -> None:
+        if busy is None:
+            # Without an explicit hint, treat anything not "ready" as busy.
+            busy = not self._fetch_btn.isEnabled() and not self._retry_in_flight
+        if self._block_reason:
+            self._run_btn.setEnabled(False)
+        else:
+            self._run_btn.setEnabled(not busy)
 
     # ----------------------------------------------------------- handlers
     def _on_fetch_clicked(self) -> None:
@@ -249,7 +300,9 @@ class SetupPage(QWidget):
                 self, t("setup.error.no_url.title"), t("setup.error.no_url.body")
             )
             return
+        self._js_hint_lbl.setVisible(False)
         self._fetch_btn.setEnabled(False)
+        self._wrong_content_btn.setEnabled(False)
         self.set_status(t("setup.status.fetching", url=url))
 
         def work():
@@ -264,8 +317,12 @@ class SetupPage(QWidget):
 
     def _on_fetch_done(self, result) -> None:
         self._fetch_btn.setEnabled(True)
+        self._wrong_content_btn.setEnabled(True)
         self._desc.setPlainText(result.text)
         self._current_url = result.source_url
+        self._fetch_attempted = True
+        self._wrong_content_btn.setVisible(True)
+        self._js_hint_lbl.setVisible(False)
         self.set_status(
             t(
                 "setup.status.fetched",
@@ -276,12 +333,100 @@ class SetupPage(QWidget):
 
     def _on_fetch_failed(self, message: str) -> None:
         self._fetch_btn.setEnabled(True)
+        self._wrong_content_btn.setEnabled(True)
+        self._fetch_attempted = True
+        self._wrong_content_btn.setVisible(True)
+        # Pages whose only failure mode is "looks like JSON" deserve the
+        # JS-hint label so the user immediately knows what to do.
+        if "JSON" in message or "config blob" in message:
+            self._js_hint_lbl.setVisible(True)
         self.set_status(t("setup.status.fetch_failed"))
         QMessageBox.warning(
             self,
             t("setup.error.fetch.title"),
             t("setup.error.fetch.body", message=message),
         )
+
+    def _on_wrong_content_clicked(self) -> None:
+        url = (self._url_input.text().strip() or self._current_url or "").strip()
+        if not url:
+            QMessageBox.warning(
+                self, t("setup.error.no_url.title"), t("setup.error.no_url.body")
+            )
+            return
+        self._retry_in_flight = True
+        self._fetch_btn.setEnabled(False)
+        self._wrong_content_btn.setEnabled(False)
+        self.set_status(t("setup.status.fetch_retrying"))
+
+        def work():
+            # Wrong-content retry escalates aggressively: desktop UA AND
+            # the Playwright system-browser fallback. The renderer only
+            # spins up if the static strategies still fail, so simple
+            # pages that just needed a different UA stay fast.
+            return fetch_job_text(url, force_desktop_ua=True, use_renderer=True)
+
+        run_in_background(
+            self._pool,
+            work,
+            on_finished=self._on_retry_done,
+            on_failed=self._on_retry_failed,
+        )
+
+    def _on_retry_done(self, result) -> None:
+        self._retry_in_flight = False
+        self._fetch_btn.setEnabled(True)
+        self._wrong_content_btn.setEnabled(True)
+        self._desc.setPlainText(result.text)
+        self._current_url = result.source_url
+        self._js_hint_lbl.setVisible(False)
+        self.set_status(
+            t(
+                "setup.status.fetched",
+                method=result.method,
+                chars=len(result.text),
+            )
+        )
+
+    def _on_retry_failed(self, message: str) -> None:
+        self._retry_in_flight = False
+        self._fetch_btn.setEnabled(True)
+        self._wrong_content_btn.setEnabled(True)
+        self._js_hint_lbl.setVisible(True)
+        self.set_status(t("setup.status.fetch_failed"))
+        self._show_fallback_dialog(message)
+
+    def _show_fallback_dialog(self, message: str) -> None:
+        url = (self._current_url or self._url_input.text().strip()).strip()
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle(t("setup.job.fallback.title"))
+        body = t("setup.job.fallback.body")
+        if message:
+            body = f"{body}\n\n{message}"
+        box.setText(body)
+        open_btn = box.addButton(
+            t("setup.job.fallback.open_browser"), QMessageBox.AcceptRole
+        )
+        copy_btn = box.addButton(
+            t("setup.job.fallback.copy"), QMessageBox.ActionRole
+        )
+        cancel_btn = box.addButton(
+            t("setup.job.fallback.cancel"), QMessageBox.RejectRole
+        )
+        box.setDefaultButton(open_btn)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is open_btn and url:
+            QDesktopServices.openUrl(QUrl(url))
+            self.set_status(t("setup.job.fallback.opened"))
+        elif clicked is copy_btn and url:
+            clipboard = QGuiApplication.clipboard()
+            if clipboard is not None:
+                clipboard.setText(url)
+                self.set_status(t("setup.job.fallback.copied"))
+        elif clicked is cancel_btn:
+            self.set_status(t("setup.status.fetch_failed"))
 
     def _resolve_github_username(self) -> str:
         if self._gh_skip.isChecked():

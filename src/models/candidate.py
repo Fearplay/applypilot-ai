@@ -55,6 +55,15 @@ class WorkExperience(BaseModel):
         default="unknown",
         description="Which input(s) this entry came from.",
     )
+    notes: str | None = Field(
+        default=None,
+        description=(
+            "Free-text dedup metadata, e.g. 'CV: 2021-2024 | LinkedIn: "
+            "2021-2023' when the two sources disagree on the exact dates. "
+            "Used by the GUI to ask the user for the correct value before "
+            "the resume is generated."
+        ),
+    )
 
 
 class EducationEntry(BaseModel):

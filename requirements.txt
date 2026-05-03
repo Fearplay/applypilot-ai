@@ -17,6 +17,12 @@ beautifulsoup4>=4.12,<5.0
 trafilatura>=1.12,<2.0
 lxml>=5.0,<6.0
 
+# Headless system-browser fallback for SPA career pages (Microsoft, Workday,
+# Greenhouse). The Python package is small; we drive the user's existing
+# Chrome / Edge installation through `channel="chrome"` / `channel="msedge"`,
+# so `playwright install` is only needed if neither browser is present.
+playwright>=1.45,<2.0
+
 # Document parsing & generation
 pymupdf>=1.24,<2.0
 python-docx>=1.1,<2.0

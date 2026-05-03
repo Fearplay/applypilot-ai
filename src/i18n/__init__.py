@@ -88,7 +88,29 @@ _STRINGS: dict[str, dict[str, str]] = {
         "setup.job.subtitle": "Fetch the description from a URL or paste the text below.",
         "setup.job.url_placeholder": "https://example.com/jobs/qa-engineer",
         "setup.job.fetch": "Fetch",
+        "setup.job.wrong": "Wrong content",
+        "setup.job.wrong.tip": (
+            "Retry the fetch with a desktop-browser User-Agent and, if "
+            "needed, render the page in a headless system browser (Chrome / "
+            "Edge / Firefox). Use this if the description above looks like "
+            "JSON or like a navigation page."
+        ),
+        "setup.job.js_needed_hint": (
+            "This page seems to need JavaScript. Click \u201cWrong content\u201d "
+            "to render it in a real browser, or paste the description below."
+        ),
         "setup.job.text_placeholder": "Paste the job description text here, or click Fetch above.",
+        "setup.job.fallback.title": "Could not load this job page",
+        "setup.job.fallback.body": (
+            "Even with a desktop User-Agent the page didn't return a "
+            "human-readable description (it likely needs JavaScript to "
+            "render). Pick what to do next:"
+        ),
+        "setup.job.fallback.open_browser": "Open URL in browser",
+        "setup.job.fallback.copy": "Copy URL",
+        "setup.job.fallback.cancel": "Cancel",
+        "setup.job.fallback.copied": "Job URL copied to clipboard - paste the description manually.",
+        "setup.job.fallback.opened": "Opened the URL in your default browser - paste the description below.",
         "setup.profile.title": "Resume & profile",
         "setup.profile.subtitle": "Drop your CV (required) and optionally a LinkedIn export.",
         "setup.profile.cv_label": "CV (PDF / DOCX / TXT / HTML) - required",
@@ -115,6 +137,13 @@ _STRINGS: dict[str, dict[str, str]] = {
         "setup.status.fetching": "Fetching {url}...",
         "setup.status.fetched": "Fetched via {method} ({chars} chars).",
         "setup.status.fetch_failed": "Fetch failed - paste the text manually.",
+        "setup.status.fetch_retrying": (
+            "Retrying with desktop User-Agent and headless system browser "
+            "(may take a few seconds)..."
+        ),
+        "setup.status.blocked.generating_questions": "AI is generating clarifying questions - please wait.",
+        "setup.status.blocked.questions_pending": "Please answer all clarifying questions first.",
+        "setup.status.blocked.recomputing": "Resolving discrepancies - please wait.",
         "setup.status.analysing": "Analysing job posting...",
         "setup.status.job_parsed": "Job parsed: {title} ({role}). Building candidate profile...",
         "setup.status.profile_ready": "Profile ready: {name} - {skills} skills, {projects} GitHub projects",
@@ -240,7 +269,62 @@ _STRINGS: dict[str, dict[str, str]] = {
         "questions.other_placeholder": "Type your answer in your own words...",
         "questions.short_text_placeholder": "Type your answer here...",
         "questions.continue": "Continue analysis",
+        "questions.continue.disabled_tip": "Answer every question above to continue.",
         "questions.cancel": "Cancel",
+        # ---- discrepancy / date-conflict questions (profile_dedup) ----
+        "dedup.q.cv_only": (
+            "{label} appears on your CV but not on LinkedIn. "
+            "Should we include it in the tailored resume?"
+        ),
+        "dedup.q.linkedin_only": (
+            "{label} appears on LinkedIn but not on your CV. "
+            "Should we include it in the tailored resume?"
+        ),
+        "dedup.q.date_conflict": (
+            "Different dates found for {label}: CV says {cv_period}, "
+            "LinkedIn says {linkedin_period}. Which is correct?"
+        ),
+        "dedup.opt.include": "Yes - include in resume",
+        "dedup.opt.skip": "No - skip",
+        "dedup.opt.other_dates": "Other - type the correct dates",
+        "dedup.why.cv_only": (
+            "We only saw this entry in your CV. Confirm it's still relevant before we use it."
+        ),
+        "dedup.why.linkedin_only": (
+            "We only saw this entry on LinkedIn. Confirm it's still relevant before we use it."
+        ),
+        "dedup.why.date_conflict": (
+            "Your CV and LinkedIn give different periods for the same entry. "
+            "We need the correct dates to avoid an inconsistency in the resume."
+        ),
+        # ---- pre-deletion confirmation modal ----
+        "dedup.confirm.title": "Confirm removals before generating",
+        "dedup.confirm.body": (
+            "The AI suggested removing the following entries from your tailored resume "
+            "because it judged them irrelevant for this job. Untick to KEEP them - we "
+            "never delete experience without your confirmation."
+        ),
+        "dedup.confirm.keep": "Keep this entry",
+        "dedup.confirm.remove": "Remove",
+        "dedup.confirm.reason": "Reason: {reason}",
+        "dedup.confirm.continue": "Continue",
+        "dedup.confirm.cancel": "Cancel",
+        "dedup.confirm.section.experience": "Work experience",
+        "dedup.confirm.section.education": "Education",
+        "dedup.confirm.section.certifications": "Certifications",
+        "dedup.confirm.section.courses": "Courses",
+        "dedup.confirm.section.projects": "Projects",
+        "dedup.confirm.reason.unrelated": "AI flagged it as unrelated to the target role.",
+        "dedup.confirm.reason.single_source": "Only one source mentioned this entry.",
+        "dedup.confirm.reason.short_or_old": "Entry is short or older than the rest of your timeline.",
+        # ---- restart prompt ----
+        "restart.title": "Restart required",
+        "restart.body": (
+            "ApplyPilot AI works best when restarted to pick up the new language. "
+            "Restart now? Your work in progress is preserved."
+        ),
+        "restart.now": "Restart now",
+        "restart.later": "Restart later",
         # ---- output language dialog ----
         "out_lang.title": "Output language",
         "out_lang.heading": "In which language should we write your documents?",
@@ -371,7 +455,30 @@ _STRINGS: dict[str, dict[str, str]] = {
         "setup.job.subtitle": "Stáhni popis z URL nebo vlož text níže.",
         "setup.job.url_placeholder": "https://example.com/jobs/qa-engineer",
         "setup.job.fetch": "Stáhnout",
+        "setup.job.wrong": "Špatný obsah",
+        "setup.job.wrong.tip": (
+            "Zkus stáhnout znovu - nejprve s User-Agentem desktopového "
+            "prohlížeče a, když to nestačí, vyrenderuj stránku v "
+            "headless systémovém prohlížeči (Chrome / Edge / Firefox). "
+            "Použij, pokud popis výše vypadá jako JSON nebo jen jako "
+            "navigační stránka."
+        ),
+        "setup.job.js_needed_hint": (
+            "Tato stránka zřejmě potřebuje JavaScript. Klikni na "
+            "\u201eŠpatný obsah\u201c pro render v reálném prohlížeči, "
+            "nebo popis pozice vlož níže ručně."
+        ),
         "setup.job.text_placeholder": "Sem vlož text inzerátu, nebo nahoře klikni na Stáhnout.",
+        "setup.job.fallback.title": "Tuto stránku se nepovedlo načíst",
+        "setup.job.fallback.body": (
+            "Ani s desktopovým User-Agentem nevrátila stránka čitelný text "
+            "(pravděpodobně potřebuje JavaScript). Vyber, co dál:"
+        ),
+        "setup.job.fallback.open_browser": "Otevřít URL v prohlížeči",
+        "setup.job.fallback.copy": "Zkopírovat URL",
+        "setup.job.fallback.cancel": "Zrušit",
+        "setup.job.fallback.copied": "URL pozice zkopírována do schránky - vlož popis ručně níže.",
+        "setup.job.fallback.opened": "Otevřel jsem URL ve výchozím prohlížeči - vlož popis ručně níže.",
         "setup.profile.title": "Životopis a profil",
         "setup.profile.subtitle": "Přetáhni svůj životopis (povinné) a volitelně export z LinkedInu.",
         "setup.profile.cv_label": "Životopis (PDF / DOCX / TXT / HTML) - povinné",
@@ -397,6 +504,13 @@ _STRINGS: dict[str, dict[str, str]] = {
         "setup.status.fetching": "Stahuji {url}...",
         "setup.status.fetched": "Staženo přes {method} ({chars} znaků).",
         "setup.status.fetch_failed": "Stažení selhalo - vlož text ručně.",
+        "setup.status.fetch_retrying": (
+            "Zkouším znovu s desktopovým User-Agentem a headless "
+            "systémovým prohlížečem (může to trvat pár sekund)..."
+        ),
+        "setup.status.blocked.generating_questions": "AI generuje doplňující otázky - počkej prosím.",
+        "setup.status.blocked.questions_pending": "Nejprve odpověz na všechny doplňující otázky.",
+        "setup.status.blocked.recomputing": "Řeším nesrovnalosti - počkej prosím.",
         "setup.status.analysing": "Analyzuji inzerát...",
         "setup.status.job_parsed": "Inzerát zpracován: {title} ({role}). Sestavuji profil kandidáta...",
         "setup.status.profile_ready": "Profil připraven: {name} - {skills} dovedností, {projects} GitHub projektů",
@@ -517,7 +631,61 @@ _STRINGS: dict[str, dict[str, str]] = {
         "questions.other_placeholder": "Napiš vlastní odpověď svými slovy...",
         "questions.short_text_placeholder": "Sem napiš svou odpověď...",
         "questions.continue": "Pokračovat v analýze",
+        "questions.continue.disabled_tip": "Než budeš pokračovat, odpověz na všechny otázky výše.",
         "questions.cancel": "Zrušit",
+        "dedup.q.cv_only": (
+            "{label} máš v životopisu, ale ne na LinkedInu. "
+            "Mám to použít v životopisu na míru?"
+        ),
+        "dedup.q.linkedin_only": (
+            "{label} máš na LinkedInu, ale ne v životopisu. "
+            "Mám to použít v životopisu na míru?"
+        ),
+        "dedup.q.date_conflict": (
+            "Pro {label} máš v životopisu jiné datum než na LinkedInu: "
+            "životopis říká {cv_period}, LinkedIn {linkedin_period}. Co je správně?"
+        ),
+        "dedup.opt.include": "Ano - zařadit do životopisu",
+        "dedup.opt.skip": "Ne - vynechat",
+        "dedup.opt.other_dates": "Jiné - zadám správná data ručně",
+        "dedup.why.cv_only": (
+            "Tento záznam jsme našli jen v životopisu. Potvrď, že je relevantní, "
+            "než ho použijeme."
+        ),
+        "dedup.why.linkedin_only": (
+            "Tento záznam jsme našli jen na LinkedInu. Potvrď, že je relevantní, "
+            "než ho použijeme."
+        ),
+        "dedup.why.date_conflict": (
+            "Životopis a LinkedIn uvádějí pro stejný záznam jiné období. "
+            "Potřebujeme správné datum, aby v životopise nebyl nesoulad."
+        ),
+        "dedup.confirm.title": "Potvrď odstranění před generováním",
+        "dedup.confirm.body": (
+            "AI navrhuje odstranit z životopisu na míru následující záznamy, "
+            "protože je vyhodnotila jako nerelevantní pro tuto pozici. Odškrtni, "
+            "abys je ZACHOVAL - bez tvého potvrzení nikdy nic nemažeme."
+        ),
+        "dedup.confirm.keep": "Zachovat tento záznam",
+        "dedup.confirm.remove": "Odstranit",
+        "dedup.confirm.reason": "Důvod: {reason}",
+        "dedup.confirm.continue": "Pokračovat",
+        "dedup.confirm.cancel": "Zrušit",
+        "dedup.confirm.section.experience": "Pracovní zkušenosti",
+        "dedup.confirm.section.education": "Vzdělání",
+        "dedup.confirm.section.certifications": "Certifikáty",
+        "dedup.confirm.section.courses": "Kurzy",
+        "dedup.confirm.section.projects": "Projekty",
+        "dedup.confirm.reason.unrelated": "AI vyhodnotila, že nesouvisí s cílovou pozicí.",
+        "dedup.confirm.reason.single_source": "Tento záznam zmiňuje jen jeden zdroj.",
+        "dedup.confirm.reason.short_or_old": "Záznam je krátký nebo starší než zbytek tvojí historie.",
+        "restart.title": "Vyžadován restart",
+        "restart.body": (
+            "ApplyPilot AI bude se změnou jazyka pracovat nejlépe po restartu. "
+            "Restartovat hned? Rozpracovaná data se zachovají."
+        ),
+        "restart.now": "Restartovat hned",
+        "restart.later": "Restartovat později",
         "out_lang.title": "Jazyk výstupních dokumentů",
         "out_lang.heading": "V jakém jazyce mají být tvé dokumenty?",
         "out_lang.intro": (
