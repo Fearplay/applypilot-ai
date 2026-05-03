@@ -895,6 +895,7 @@ class MainWindow(QMainWindow):
             skill_gap_plan=gaps,
             evidence=list(self._state.evidence.items) if self._state.evidence else [],
             generated_at=datetime.now(),
+            output_language=self._state.docs_language or get_language(),
         )
         self._state.package = package
         self._docs_page.load_package(package)

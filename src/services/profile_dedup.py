@@ -33,6 +33,7 @@ from collections.abc import Iterable
 from ..i18n import t
 from ..models.candidate import (
     CandidateProfile,
+    CertificationEntry,
     EducationEntry,
     EntrySource,
     WorkExperience,
@@ -111,6 +112,38 @@ _TOKEN_EQUIVALENCES: dict[str, str] = {
     "ceskoslovenska": "cz",
     "ceskoslovenske": "cz",
     "ceskoslovenske,": "cz",
+    # Faculty types (CZ adjective <-> EN noun). Without these the dedup
+    # heuristic can't see that "Provozně ekonomická fakulta ČZU v Praze"
+    # and "Faculty of Economics and Management, Czech University of Life
+    # Sciences Prague" describe the same school - they'd only share the
+    # city token after normalisation, which is below the 2-shared-tokens
+    # bar that protects against merging two genuinely distinct Prague
+    # universities (Karlova vs ČVUT). Mapping the most common faculty
+    # adjectives lifts the user-bug pair above the bar without affecting
+    # the unrelated-schools case.
+    "ekonomicka": "economics",
+    "ekonomicke": "economics",
+    "ekonomicky": "economics",
+    "ekonomicky,": "economics",
+    "ekonomie": "economics",
+    "economic": "economics",
+    "economical": "economics",
+    "ekonomicke,": "economics",
+    "spravni": "administration",
+    "pravnicka": "law",
+    "pravnicke": "law",
+    "lekarska": "medical",
+    "lekarske": "medical",
+    "prirodovedecka": "science",
+    "prirodovedecke": "science",
+    "filozoficka": "philosophy",
+    "filozoficke": "philosophy",
+    "pedagogicka": "education",
+    "pedagogicke": "education",
+    "informatika": "informatics",
+    "informatiky": "informatics",
+    "computer": "informatics",  # "computer science" / "informatika"
+    "informatics": "informatics",
 }
 
 
@@ -264,12 +297,10 @@ def _detect_date_conflict(
     """
     if not a_period or not b_period:
         return None
-    if a_period.strip() == b_period.strip():
+    if _periods_are_equivalent(a_period, b_period):
+        # Catches both literal equality AND year-range equality (e.g.
+        # "06/2023 - 07/2025" vs "června 2023 - července 2025").
         return None
-    a_range = _parse_year_range(a_period)
-    b_range = _parse_year_range(b_period)
-    if a_range and b_range and a_range == b_range:
-        return None  # different wording, same years
     sources = {a_source, b_source}
     if not ({"cv", "linkedin"} <= sources):
         return None
@@ -377,6 +408,18 @@ def _dedup_experience(entries: list[WorkExperience]) -> list[WorkExperience]:
 
 
 def _dedup_education(entries: list[EducationEntry]) -> list[EducationEntry]:
+    """Greedy O(n^2) dedup of education rows.
+
+    Relies on the strict :func:`_names_match` heuristic - which was made
+    cross-language-aware via the expanded :data:`_TOKEN_EQUIVALENCES` map
+    (faculty adjectives, "informatika" <-> "informatics", etc.) so that
+    e.g. "Provozně ekonomická fakulta ČZU v Praze" and "Faculty of
+    Economics and Management, Czech University of Life Sciences Prague"
+    now collapse on shared tokens (``economics`` + ``praha``) without
+    needing the city-only fallback that risked merging genuinely distinct
+    Prague schools (Karlova vs ČVUT, both of which only share ``praha``
+    after normalisation).
+    """
     survivors: list[EducationEntry] = []
     for entry in entries:
         merged = False
@@ -391,6 +434,249 @@ def _dedup_education(entries: list[EducationEntry]) -> list[EducationEntry]:
         if not merged:
             survivors.append(entry)
     return survivors
+
+
+# ---------------------------------------------------------------------------
+# Certifications dedup
+# ---------------------------------------------------------------------------
+
+# Common issuer prefixes that prevent two records from looking like the same
+# course (e.g. CV bullet "Java Programming" vs LinkedIn "Oracle Academy -
+# Java Programming"). Stripped during normalization so the substring rule
+# in :func:`_certs_are_same` catches the pair.
+_CERT_ISSUER_PREFIXES: tuple[str, ...] = (
+    "oracle academy",
+    "oracle university",
+    "engeto",
+    "udemy",
+    "coursera",
+    "edx",
+    "linkedin learning",
+    "pluralsight",
+    "microsoft learn",
+    "microsoft",
+    "aws",
+    "google",
+    "ibm",
+)
+
+
+# Cross-language token map applied during cert normalisation so that e.g.
+# "Python Akademie" and "Python Academy" share enough tokens to be flagged
+# as duplicates. Kept narrow on purpose - random tokens here would silently
+# merge unrelated certificates.
+_CERT_TOKEN_EQUIVALENCES: dict[str, str] = {
+    "akademie": "academy",
+    "akademy": "academy",
+    "akademia": "academy",
+    "kurzu": "course",
+    "kurzem": "course",
+    "kurz": "course",
+    "kurs": "course",
+    "kurzy": "course",
+    "skoleni": "training",
+    "skolenia": "training",
+    "training": "training",
+    "trening": "training",
+    "zaklady": "fundamentals",
+    "zaklad": "fundamentals",
+    "fundamentals": "fundamentals",
+    "foundations": "fundamentals",
+    "intensive": "intensive",
+    "intenzivni": "intensive",
+    "intenzivny": "intensive",
+}
+
+
+def _normalize_cert_name(text: str) -> str:
+    """Lowercase, drop diacritics, strip issuer prefix, drop year tokens.
+
+    Also collapses common CZ <-> EN cert vocabulary via
+    :data:`_CERT_TOKEN_EQUIVALENCES` so "Python Akademie" and "Python
+    Academy" produce the same canonical form.
+    """
+    if not text:
+        return ""
+    cleaned = _strip_diacritics(text).lower()
+    cleaned = re.sub(r"\b(19|20)\d{2}\b", " ", cleaned)
+    cleaned = re.sub(r"[\.,/\\\(\)\[\]_·•:]", " ", cleaned)
+    # The issuer is sometimes glued to the name with a hyphen, sometimes
+    # with " - " or " | ". Normalise all separators to a single space
+    # before scanning for prefixes.
+    cleaned = re.sub(r"\s*-\s*", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    for prefix in _CERT_ISSUER_PREFIXES:
+        if cleaned.startswith(prefix + " ") or cleaned == prefix:
+            cleaned = cleaned[len(prefix):].strip()
+    # Final tokenisation reuses the academic stop-word list so noise
+    # tokens like "the", "of" don't get in the way, and applies the
+    # cert-specific equivalence map so cross-language duplicates collapse.
+    raw_tokens = [tok for tok in cleaned.split() if tok and tok not in _STOP_TOKENS]
+    tokens = [_CERT_TOKEN_EQUIVALENCES.get(tok, tok) for tok in raw_tokens]
+    return " ".join(tokens)
+
+
+def _certs_are_same(a: CertificationEntry, b: CertificationEntry) -> bool:
+    """Heuristic: same normalized name OR substring OR >= 0.6 token overlap."""
+    na = _normalize_cert_name(a.name)
+    nb = _normalize_cert_name(b.name)
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    if na in nb or nb in na:
+        return True
+    tokens_a = set(na.split())
+    tokens_b = set(nb.split())
+    if not tokens_a or not tokens_b:
+        return False
+    smaller, larger = (
+        (tokens_a, tokens_b) if len(tokens_a) <= len(tokens_b) else (tokens_b, tokens_a)
+    )
+    overlap = len(smaller & larger)
+    if overlap < 2:
+        return False
+    return overlap / len(smaller) >= 0.6
+
+
+def _merge_certs(a: CertificationEntry, b: CertificationEntry) -> CertificationEntry:
+    """Keep the longer name; backfill issuer / year from whichever side has them."""
+    primary, secondary = (a, b) if len(a.name or "") >= len(b.name or "") else (b, a)
+    return primary.model_copy(update={
+        "name": primary.name or secondary.name,
+        "issuer": primary.issuer or secondary.issuer,
+        "year": primary.year or secondary.year,
+    })
+
+
+def _dedup_certifications(entries: list[CertificationEntry]) -> list[CertificationEntry]:
+    """Greedy O(n^2) dedup of a certification list."""
+    survivors: list[CertificationEntry] = []
+    for entry in entries:
+        if not (entry.name or "").strip():
+            continue
+        merged = False
+        for i, existing in enumerate(survivors):
+            if _certs_are_same(existing, entry):
+                survivors[i] = _merge_certs(existing, entry)
+                merged = True
+                break
+        if not merged:
+            survivors.append(entry)
+    return survivors
+
+
+# ---------------------------------------------------------------------------
+# Spoken languages dedup
+# ---------------------------------------------------------------------------
+
+# Map any spelling we see in the inputs to a canonical English label. New
+# entries are always lowercase + diacritic-stripped on lookup. The canonical
+# label is what stays on the deduplicated profile; we DO NOT translate to
+# the active UI language here (the resume prompt + renderer handle that).
+_LANGUAGE_CANONICAL: dict[str, str] = {
+    "czech": "Czech",
+    "cestina": "Czech",
+    "ceski": "Czech",
+    "cesky": "Czech",
+    "cesko": "Czech",
+    "slovak": "Slovak",
+    "slovencina": "Slovak",
+    "slovenstina": "Slovak",
+    "english": "English",
+    "anglictina": "English",
+    "anglicky": "English",
+    "german": "German",
+    "nemcina": "German",
+    "deutsch": "German",
+    "french": "French",
+    "francouzstina": "French",
+    "francais": "French",
+    "spanish": "Spanish",
+    "spanelstina": "Spanish",
+    "espanol": "Spanish",
+    "italian": "Italian",
+    "italstina": "Italian",
+    "italiano": "Italian",
+    "polish": "Polish",
+    "polstina": "Polish",
+    "russian": "Russian",
+    "rustina": "Russian",
+    "ukrainian": "Ukrainian",
+    "ukrajinstina": "Ukrainian",
+    "chinese": "Chinese",
+    "cinstina": "Chinese",
+    "japanese": "Japanese",
+    "japonstina": "Japanese",
+    "korean": "Korean",
+    "korejstina": "Korean",
+    "portuguese": "Portuguese",
+    "portugalstina": "Portuguese",
+    "dutch": "Dutch",
+    "nizozemstina": "Dutch",
+    "swedish": "Swedish",
+    "svedstina": "Swedish",
+    "norwegian": "Norwegian",
+    "norstina": "Norwegian",
+    "danish": "Danish",
+    "dantina": "Danish",
+}
+
+
+def _split_language_entry(entry: str) -> tuple[str, str]:
+    """Split ``"Czech (C2 - native)"`` into ``("Czech", "C2 - native")``."""
+    text = (entry or "").strip()
+    if not text:
+        return "", ""
+    for sep in ("(", " - ", " \u2013 ", ":"):
+        if sep in text:
+            name, _, raw_level = text.partition(sep)
+            return name.strip(), raw_level.rstrip(") ").strip()
+    return text, ""
+
+
+def _canonicalise_language_name(name: str) -> str:
+    """Map ``name`` to a canonical English label, falling back to the input."""
+    key = _strip_diacritics(name).lower().strip()
+    # Strip trailing modifiers some users include in the name itself
+    # (e.g. "English language", "Czech mother tongue").
+    key = re.sub(r"\b(language|jazyk|mother\s*tongue|materstina|materský)\b", "", key)
+    key = re.sub(r"\s+", " ", key).strip()
+    return _LANGUAGE_CANONICAL.get(key, name.strip())
+
+
+def _dedup_languages(entries: list[str]) -> list[str]:
+    """Collapse "Czech" / "čeština" / "Czech (mateřský)" into one entry.
+
+    The canonical English name wins; the level annotation from the
+    richest variant is preserved. Order follows the first time each
+    canonical name appears in the input.
+    """
+    canonical_order: list[str] = []
+    by_canonical: dict[str, str] = {}  # canonical -> best level seen
+    for raw in entries:
+        name, level = _split_language_entry(raw)
+        if not name:
+            continue
+        canonical = _canonicalise_language_name(name)
+        if canonical not in by_canonical:
+            canonical_order.append(canonical)
+            by_canonical[canonical] = level
+        else:
+            existing_level = by_canonical[canonical]
+            if not existing_level and level:
+                by_canonical[canonical] = level
+            elif level and len(level) > len(existing_level):
+                by_canonical[canonical] = level
+
+    result: list[str] = []
+    for canonical in canonical_order:
+        level = by_canonical[canonical]
+        if level:
+            result.append(f"{canonical} ({level})")
+        else:
+            result.append(canonical)
+    return result
 
 
 def _ensure_ids(entries: list, prefix: str) -> None:
@@ -417,9 +703,16 @@ def dedup_profile(profile: CandidateProfile) -> CandidateProfile:
     description, the union of bullets / technologies and the merged
     ``source`` (mixed -> ``both``). Date conflicts are persisted in the
     entry's ``notes`` field for later question generation.
+
+    Also collapses duplicate certifications and spoken-language entries
+    that come from the same source mentioned twice with different
+    spellings (e.g. ``"Czech"`` + ``"čeština"``, or ``"Java Programming"``
+    + ``"Oracle Academy - Java Programming"``).
     """
     deduped_exp = _dedup_experience(list(profile.experience))
     deduped_edu = _dedup_education(list(profile.education))
+    deduped_certs = _dedup_certifications(list(profile.certifications))
+    deduped_langs = _dedup_languages(list(profile.spoken_languages))
     if len(deduped_exp) != len(profile.experience):
         logger.info(
             "profile_dedup: collapsed %d duplicate experience rows",
@@ -430,8 +723,20 @@ def dedup_profile(profile: CandidateProfile) -> CandidateProfile:
             "profile_dedup: collapsed %d duplicate education rows",
             len(profile.education) - len(deduped_edu),
         )
+    if len(deduped_certs) != len(profile.certifications):
+        logger.info(
+            "profile_dedup: collapsed %d duplicate certification rows",
+            len(profile.certifications) - len(deduped_certs),
+        )
+    if len(deduped_langs) != len(profile.spoken_languages):
+        logger.info(
+            "profile_dedup: collapsed %d duplicate spoken-language rows",
+            len(profile.spoken_languages) - len(deduped_langs),
+        )
     profile.experience = deduped_exp
     profile.education = deduped_edu
+    profile.certifications = deduped_certs
+    profile.spoken_languages = deduped_langs
     _ensure_ids(profile.experience, "exp")
     _ensure_ids(profile.education, "edu")
     return profile
@@ -558,6 +863,25 @@ def build_source_discrepancy_questions(
     return questions[:max_questions]
 
 
+def _periods_are_equivalent(a: str, b: str) -> bool:
+    """Return True when two free-text date ranges describe the same period.
+
+    Treats ``"06/2023 - 07/2025"`` and ``"června 2023 - července 2025"`` as
+    equal because both parse to the same ``(2023, 2025)`` year range.
+    Falls back to a whitespace-insensitive string comparison when neither
+    side parses (handles cases like ``"ongoing"`` vs ``"ongoing "``).
+    """
+    a_clean = (a or "").strip()
+    b_clean = (b or "").strip()
+    if a_clean == b_clean:
+        return True
+    a_range = _parse_year_range(a_clean)
+    b_range = _parse_year_range(b_clean)
+    if a_range is not None and b_range is not None:
+        return a_range == b_range
+    return False
+
+
 def build_date_conflict_questions(
     profile: CandidateProfile,
     *,
@@ -572,6 +896,11 @@ def build_date_conflict_questions(
     can also be supplied by the AI directly (see
     ``analyze_candidate_user_prompt``). Both sources funnel into the same
     handler.
+
+    Conflict detection compares parsed year ranges, not raw strings, so we
+    do NOT bother the user when the two sources just spell the same period
+    differently (``"06/2023 - 07/2025"`` vs ``"června 2023 - července
+    2025"`` both parse to ``(2023, 2025)``).
     """
     questions: list[ClarifyingQuestion] = []
 
@@ -583,7 +912,7 @@ def build_date_conflict_questions(
         linkedin_period = match.group("linkedin").strip()
         if not cv_period or not linkedin_period:
             continue
-        if cv_period == linkedin_period:
+        if _periods_are_equivalent(cv_period, linkedin_period):
             continue
         questions.append(
             _date_conflict_question(
@@ -602,7 +931,7 @@ def build_date_conflict_questions(
         linkedin_period = match.group("linkedin").strip()
         if not cv_period or not linkedin_period:
             continue
-        if cv_period == linkedin_period:
+        if _periods_are_equivalent(cv_period, linkedin_period):
             continue
         questions.append(
             _date_conflict_question(
@@ -676,3 +1005,18 @@ __all__ = [
     "excluded_ids_from_answers",
     "filter_profile_entries",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Test-only re-exports
+# ---------------------------------------------------------------------------
+# The test suite imports these private helpers directly so it can pin their
+# behaviour without going through dedup_profile. Listed here, not in
+# __all__, so star-imports stay narrow.
+_TEST_ONLY = (  # noqa: F841 - documentation aid, not used at runtime
+    "_dedup_certifications",
+    "_dedup_languages",
+    "_canonicalise_language_name",
+    "_normalize_cert_name",
+    "_periods_are_equivalent",
+)

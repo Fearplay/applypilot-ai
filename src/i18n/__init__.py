@@ -156,6 +156,14 @@ _STRINGS: dict[str, dict[str, str]] = {
         "setup.error.no_candidate.body": "Add at least a CV, a LinkedIn export or a GitHub profile URL.",
         "setup.error.fetch.title": "Could not fetch URL",
         "setup.error.fetch.body": "Could not auto-fetch the page. Please paste the description text manually.\n\n{message}",
+        "setup.error.fetch.retry_title": "Page didn't load",
+        "setup.error.fetch.retry_body": (
+            "Couldn't fetch this page automatically. Try with browser "
+            "rendering (Playwright)? It uses your installed Chrome / Edge "
+            "and usually works on JavaScript-heavy career sites."
+        ),
+        "setup.error.fetch.try_playwright": "Try Playwright",
+        "setup.error.fetch.cancel": "Cancel",
         "setup.error.pipeline.title": "Analysis failed",
         # ---- match page ----
         "match.legend": "Hover over each column heading for an explanation of how the AI bucketed these skills.",
@@ -523,6 +531,15 @@ _STRINGS: dict[str, dict[str, str]] = {
         "setup.error.no_candidate.body": "Přidej alespoň životopis, LinkedIn export nebo URL GitHub profilu.",
         "setup.error.fetch.title": "Stránku se nepovedlo načíst",
         "setup.error.fetch.body": "Stránku se nepovedlo automaticky stáhnout. Vlož text inzerátu ručně.\n\n{message}",
+        "setup.error.fetch.retry_title": "Stránku se nepovedlo načíst",
+        "setup.error.fetch.retry_body": (
+            "Tuto stránku se nepovedlo automaticky stáhnout. Zkusit to "
+            "přes prohlížeč (Playwright)? Použije nainstalovaný Chrome / "
+            "Edge a obvykle to funguje i na kariérních stránkách "
+            "závislých na JavaScriptu."
+        ),
+        "setup.error.fetch.try_playwright": "Zkusit Playwright",
+        "setup.error.fetch.cancel": "Zrušit",
         "setup.error.pipeline.title": "Analýza selhala",
         "match.legend": "Najedi myší na nadpis sloupce a uvidíš, jak AI dovednosti zařadila.",
         "match.overall": "CELKEM",
