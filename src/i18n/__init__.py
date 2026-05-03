@@ -292,9 +292,17 @@ _STRINGS: dict[str, dict[str, str]] = {
             "Different dates found for {label}: CV says {cv_period}, "
             "LinkedIn says {linkedin_period}. Which is correct?"
         ),
+        "dedup.q.struct_mismatch": (
+            "Your CV groups multiple companies into one entry ({cv_label}), but "
+            "LinkedIn lists them separately ({linkedin_labels}). How should the "
+            "resume present this period?"
+        ),
         "dedup.opt.include": "Yes - include in resume",
         "dedup.opt.skip": "No - skip",
         "dedup.opt.other_dates": "Other - type the correct dates",
+        "dedup.opt.struct_split": "Split into separate entries (one per company, like LinkedIn)",
+        "dedup.opt.struct_merge": "Keep as one combined entry (like the CV)",
+        "dedup.opt.struct_manual": "Other - I'll edit it manually later",
         "dedup.why.cv_only": (
             "We only saw this entry in your CV. Confirm it's still relevant before we use it."
         ),
@@ -305,15 +313,20 @@ _STRINGS: dict[str, dict[str, str]] = {
             "Your CV and LinkedIn give different periods for the same entry. "
             "We need the correct dates to avoid an inconsistency in the resume."
         ),
+        "dedup.why.struct_mismatch": (
+            "Your two sources describe the same period at different levels of detail. "
+            "Pick the layout you prefer so the resume stays consistent."
+        ),
         # ---- pre-deletion confirmation modal ----
         "dedup.confirm.title": "Confirm removals before generating",
         "dedup.confirm.body": (
-            "The AI suggested removing the following entries from your tailored resume "
-            "because it judged them irrelevant for this job. Untick to KEEP them - we "
-            "never delete experience without your confirmation."
+            "The AI suggested removing the entries below because it judged them irrelevant "
+            "for this job. Tick the box next to a row only if you actually want it gone - "
+            "anything left unticked stays in the resume."
         ),
         "dedup.confirm.keep": "Keep this entry",
         "dedup.confirm.remove": "Remove",
+        "dedup.confirm.remove_action": "Remove this entry",
         "dedup.confirm.reason": "Reason: {reason}",
         "dedup.confirm.continue": "Continue",
         "dedup.confirm.cancel": "Cancel",
@@ -322,7 +335,7 @@ _STRINGS: dict[str, dict[str, str]] = {
         "dedup.confirm.section.certifications": "Certifications",
         "dedup.confirm.section.courses": "Courses",
         "dedup.confirm.section.projects": "Projects",
-        "dedup.confirm.reason.unrelated": "AI flagged it as unrelated to the target role.",
+        "dedup.confirm.reason.unrelated": "AI flagged it as unrelated to the target role: {reason}",
         "dedup.confirm.reason.single_source": "Only one source mentioned this entry.",
         "dedup.confirm.reason.short_or_old": "Entry is short or older than the rest of your timeline.",
         # ---- restart prompt ----
@@ -662,9 +675,17 @@ _STRINGS: dict[str, dict[str, str]] = {
             "Pro {label} máš v životopisu jiné datum než na LinkedInu: "
             "životopis říká {cv_period}, LinkedIn {linkedin_period}. Co je správně?"
         ),
+        "dedup.q.struct_mismatch": (
+            "V životopisu máš víc firem v jednom záznamu ({cv_label}), ale na "
+            "LinkedInu jsou rozdělené ({linkedin_labels}). Jak to mám prezentovat "
+            "v životopisu na míru?"
+        ),
         "dedup.opt.include": "Ano - zařadit do životopisu",
         "dedup.opt.skip": "Ne - vynechat",
         "dedup.opt.other_dates": "Jiné - zadám správná data ručně",
+        "dedup.opt.struct_split": "Rozdělit na samostatné záznamy (po jedné firmě, jako na LinkedInu)",
+        "dedup.opt.struct_merge": "Nechat jako jeden společný záznam (jako v životopisu)",
+        "dedup.opt.struct_manual": "Jiné - dodatečně si to upravím ručně",
         "dedup.why.cv_only": (
             "Tento záznam jsme našli jen v životopisu. Potvrď, že je relevantní, "
             "než ho použijeme."
@@ -677,14 +698,19 @@ _STRINGS: dict[str, dict[str, str]] = {
             "Životopis a LinkedIn uvádějí pro stejný záznam jiné období. "
             "Potřebujeme správné datum, aby v životopise nebyl nesoulad."
         ),
+        "dedup.why.struct_mismatch": (
+            "Tvoje dva zdroje popisují stejné období v jiné úrovni detailu. "
+            "Vyber preferované rozložení, ať životopis zůstane konzistentní."
+        ),
         "dedup.confirm.title": "Potvrď odstranění před generováním",
         "dedup.confirm.body": (
-            "AI navrhuje odstranit z životopisu na míru následující záznamy, "
-            "protože je vyhodnotila jako nerelevantní pro tuto pozici. Odškrtni, "
-            "abys je ZACHOVAL - bez tvého potvrzení nikdy nic nemažeme."
+            "AI navrhuje odstranit níže uvedené záznamy, protože je vyhodnotila "
+            "jako nerelevantní pro tuto pozici. Zaškrtni jen ty, které opravdu "
+            "chceš smazat - cokoliv neoznačeného v životopise zůstane."
         ),
         "dedup.confirm.keep": "Zachovat tento záznam",
         "dedup.confirm.remove": "Odstranit",
+        "dedup.confirm.remove_action": "Odstranit tento záznam",
         "dedup.confirm.reason": "Důvod: {reason}",
         "dedup.confirm.continue": "Pokračovat",
         "dedup.confirm.cancel": "Zrušit",
@@ -693,7 +719,7 @@ _STRINGS: dict[str, dict[str, str]] = {
         "dedup.confirm.section.certifications": "Certifikáty",
         "dedup.confirm.section.courses": "Kurzy",
         "dedup.confirm.section.projects": "Projekty",
-        "dedup.confirm.reason.unrelated": "AI vyhodnotila, že nesouvisí s cílovou pozicí.",
+        "dedup.confirm.reason.unrelated": "AI vyhodnotila, že nesouvisí s cílovou pozicí: {reason}",
         "dedup.confirm.reason.single_source": "Tento záznam zmiňuje jen jeden zdroj.",
         "dedup.confirm.reason.short_or_old": "Záznam je krátký nebo starší než zbytek tvojí historie.",
         "restart.title": "Vyžadován restart",

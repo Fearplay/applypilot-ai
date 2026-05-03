@@ -50,6 +50,7 @@ from ..services.history_service import append_history, load_package_files
 from ..services.interview_generator import generate_interview_questions
 from ..services.match_engine import compute_match, needs_clarifying_questions
 from ..services.profile_dedup import (
+    apply_structural_choice,
     excluded_ids_from_answers,
     filter_profile_entries,
 )
@@ -96,6 +97,11 @@ class WorkflowState:
     #: candidate profile right before resume / cover / interview / gap calls
     #: so excluded rows never reach the AI.
     excluded_entry_ids: set[str] = field(default_factory=set)
+    #: AI-suggested removal candidates (entry_id -> human-friendly reason)
+    #: produced by the match-report pass. The user still has to tick them in
+    #: :class:`SectionRemovalConfirmDialog` for the row to actually drop, so
+    #: this map only feeds the *display* of why a row is in the dialog.
+    ai_removal_reasons: dict[str, str] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -201,13 +207,15 @@ class _RemovalCandidate:
 
 
 class SectionRemovalConfirmDialog(QDialog):
-    """Modal that lists rows the user already marked as 'skip'.
+    """Modal listing rows the AI / discrepancy-flow flagged for removal.
 
     Shown right before document generation so the user gets a final
-    "are you SURE you want to remove these?" loop. Each row is rendered
-    with a *Keep this entry* checkbox defaulting to **checked**, i.e. the
-    safe default keeps the row. Unchecking the box keeps it on the
-    exclusion list.
+    "do you actually want to remove these?" loop. The semantics intentionally
+    match the user's mental model: each row has an *Odstranit* / *Remove this
+    entry* checkbox that defaults to **unchecked**, so anything the user does
+    not actively tick stays in the resume. Inverting the previous "Keep" /
+    default-checked design fixes the ux trap where users left the box checked
+    expecting deletion.
     """
 
     def __init__(
@@ -269,8 +277,8 @@ class SectionRemovalConfirmDialog(QDialog):
                 row_layout = QVBoxLayout(row)
                 row_layout.setContentsMargins(10, 8, 10, 8)
                 row_layout.setSpacing(4)
-                cb = QCheckBox(f"{t('dedup.confirm.keep')} - {cand.label}")
-                cb.setChecked(True)
+                cb = QCheckBox(f"{t('dedup.confirm.remove_action')} - {cand.label}")
+                cb.setChecked(False)
                 cb.setStyleSheet(
                     f"QCheckBox {{ color: {Tokens.text}; font-size: 13px; }}"
                 )
@@ -297,8 +305,12 @@ class SectionRemovalConfirmDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons, alignment=Qt.AlignRight)
 
-    def kept_ids(self) -> set[str]:
-        """Return the set of entry ids the user un-checked, i.e. wants to KEEP."""
+    def remove_ids(self) -> set[str]:
+        """Return the set of entry ids the user actively ticked for removal.
+
+        Anything not ticked stays in the resume - the safe default is to keep
+        every row even if it was originally on the AI's removal proposal.
+        """
         return {eid for eid, cb in self._checkboxes.items() if cb.isChecked()}
 
 
@@ -631,11 +643,39 @@ class MainWindow(QMainWindow):
         report, evidence = result
         self._state.match_report = report
         self._state.evidence = evidence
+        self._capture_ai_removal_reasons(report)
         self.statusBar().clearMessage()
         if needs_clarifying_questions(self._state.job, evidence):
             self._fetch_clarifying_questions()
         else:
             self._show_match_report()
+
+    def _capture_ai_removal_reasons(self, report) -> None:
+        """Cache ``report.suggested_removals`` as ``entry_id -> reason`` so the
+        pre-generation confirmation dialog can show WHY each row was flagged.
+
+        Filters out suggestions whose ``entry_id`` doesn't actually exist on
+        the current candidate profile - protects against stale ids when the
+        AI hallucinates one or when the user re-ran the analysis with a
+        different exclusion set."""
+        candidate = self._state.candidate
+        if candidate is None or report is None:
+            self._state.ai_removal_reasons = {}
+            return
+        valid_ids: set[str] = set()
+        for entry in candidate.experience:
+            if entry.id:
+                valid_ids.add(entry.id)
+        for entry in candidate.education:
+            if entry.id:
+                valid_ids.add(entry.id)
+        reasons: dict[str, str] = {}
+        for s in getattr(report, "suggested_removals", None) or []:
+            entry_id = getattr(s, "entry_id", "") or ""
+            if not entry_id or entry_id not in valid_ids:
+                continue
+            reasons[entry_id] = (getattr(s, "reason", "") or "").strip()
+        self._state.ai_removal_reasons = reasons
 
     def _fetch_clarifying_questions(self) -> None:
         provider = self._provider
@@ -679,6 +719,12 @@ class MainWindow(QMainWindow):
         dlg = QuestionsDialog(questions, parent=self)
         if dlg.exec() == QDialog.Accepted:
             self._state.answers = dlg.answers()
+            # Apply structural-mismatch decisions FIRST. These can drop CV or
+            # LinkedIn rows referenced by the rest of the answer set, so we
+            # mutate the candidate profile before computing the exclusion
+            # ids that get fed to the resume / cover / interview / gap
+            # generators downstream.
+            self._apply_structural_answers()
             # Translate any 'discrepancy:<id>' answers of "No - skip it" into
             # the WorkflowState exclusion set so document generation skips
             # those rows entirely.
@@ -689,6 +735,26 @@ class MainWindow(QMainWindow):
         else:
             self._setup_page.set_analysis_blocked(None)
             self._show_match_report()
+
+    def _apply_structural_answers(self) -> None:
+        """Mutate ``self._state.candidate`` based on every ``discrepancy:struct:``
+        answer the user just gave.
+
+        Idempotent: applying the same answers twice is a no-op the second
+        time around because the relevant rows are already gone after the
+        first pass. Safe to call when no structural questions exist.
+        """
+        candidate = self._state.candidate
+        if candidate is None:
+            return
+        for ans in self._state.answers.answers:
+            qid = ans.question_id or ""
+            if not qid.startswith("discrepancy:struct:"):
+                continue
+            cv_entry_id = qid.split("discrepancy:struct:", 1)[-1]
+            if not cv_entry_id:
+                continue
+            apply_structural_choice(candidate, cv_entry_id, ans.answer or "")
 
     def _start_match_after_answers(self) -> None:
         provider = self._provider
@@ -718,6 +784,7 @@ class MainWindow(QMainWindow):
         report, evidence = result
         self._state.match_report = report
         self._state.evidence = evidence
+        self._capture_ai_removal_reasons(report)
         self.statusBar().clearMessage()
         self._setup_page.set_analysis_blocked(None)
         self._show_match_report()
@@ -793,20 +860,22 @@ class MainWindow(QMainWindow):
         )
 
     def _confirm_section_removals(self, candidate: CandidateProfile) -> bool:
-        """Show a confirmation modal listing rows about to be removed.
+        """Show a confirmation modal listing rows the AI / discrepancy flow
+        suggested for removal.
 
         Returns ``True`` if the user wants to proceed with document
-        generation (regardless of which rows they kept) and ``False`` if
-        they cancelled. Side effect: mutates
-        ``self._state.excluded_entry_ids`` to drop any ids the user opted
-        to keep, so the eventual ``filter_profile_entries`` call sees the
-        final exclusion set.
+        generation and ``False`` if they cancelled. Side effect: mutates
+        ``self._state.excluded_entry_ids`` to be the FINAL set of ids that
+        should be dropped from the candidate profile - i.e. only the rows
+        the user actively ticked in the dialog.
 
-        When the exclusion set is empty (and no AI-suggested removals have
-        been collected) we skip the dialog entirely and return ``True``.
+        When there are no candidates to display (no exclusions and no
+        AI-suggested removals) we skip the dialog entirely and return ``True``.
         """
-        excluded_ids = self._state.excluded_entry_ids
-        if not excluded_ids:
+        excluded_ids = set(self._state.excluded_entry_ids or set())
+        ai_reasons = dict(self._state.ai_removal_reasons or {})
+        review_ids = excluded_ids | set(ai_reasons.keys())
+        if not review_ids:
             return True
 
         candidates: list[_RemovalCandidate] = []
@@ -820,45 +889,48 @@ class MainWindow(QMainWindow):
             and not a.question_id.startswith("discrepancy:date:")
         }
 
+        def _reason_for(entry_id: str) -> str:
+            ai_reason = ai_reasons.get(entry_id)
+            if ai_reason:
+                return t(
+                    "dedup.confirm.reason.unrelated", reason=ai_reason
+                )
+            answer = answer_lookup.get(entry_id)
+            if answer:
+                return answer
+            return t("dedup.confirm.reason.single_source")
+
         for entry in candidate.experience:
-            if not entry.id or entry.id not in excluded_ids:
+            if not entry.id or entry.id not in review_ids:
                 continue
             label_bits = [entry.title or "Role"]
             if entry.company:
                 label_bits.append(f"@ {entry.company}")
             if entry.period:
                 label_bits.append(f"({entry.period})")
-            label = " ".join(label_bits)
-            reason = answer_lookup.get(entry.id) or t(
-                "dedup.confirm.reason.single_source"
-            )
             candidates.append(
                 _RemovalCandidate(
                     entry_id=entry.id,
                     section="experience",
-                    label=label,
-                    reason=reason,
+                    label=" ".join(label_bits),
+                    reason=_reason_for(entry.id),
                 )
             )
 
         for entry in candidate.education:
-            if not entry.id or entry.id not in excluded_ids:
+            if not entry.id or entry.id not in review_ids:
                 continue
             label_bits = [entry.degree or "Studies"]
             if entry.institution:
                 label_bits.append(f"@ {entry.institution}")
             if entry.period:
                 label_bits.append(f"({entry.period})")
-            label = " ".join(label_bits)
-            reason = answer_lookup.get(entry.id) or t(
-                "dedup.confirm.reason.single_source"
-            )
             candidates.append(
                 _RemovalCandidate(
                     entry_id=entry.id,
                     section="education",
-                    label=label,
-                    reason=reason,
+                    label=" ".join(label_bits),
+                    reason=_reason_for(entry.id),
                 )
             )
 
@@ -869,13 +941,11 @@ class MainWindow(QMainWindow):
         result = dlg.exec()
         if result != QDialog.Accepted:
             return False
-        kept_ids = dlg.kept_ids()
-        # Anything the user explicitly KEPT (checkbox stayed checked) drops
-        # off the exclusion list - but anything they unchecked stays on it.
-        if kept_ids:
-            self._state.excluded_entry_ids = (
-                self._state.excluded_entry_ids - kept_ids
-            )
+        # Inverted semantics: only the rows the user actively TICKED in the
+        # dialog get removed. Everything else (including previously
+        # discrepancy-excluded rows the user did not re-confirm) stays in
+        # the resume so the safe default is "keep".
+        self._state.excluded_entry_ids = dlg.remove_ids()
         return True
 
     def _on_documents_done(self, result) -> None:

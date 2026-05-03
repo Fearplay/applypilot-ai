@@ -97,3 +97,76 @@ def test_skill_gap_plan_for_missing_only(fake_provider, sample_job_text, sample_
     for gap in plan:
         assert gap.learning_path
         assert gap.suggested_project
+
+
+def test_match_report_suggests_removing_mcdonalds_for_it_role(fake_provider):
+    """The fake provider's heuristic must flag a fast-food job as
+    'unrelated' when the target role is an IT position. The user
+    explicitly asked for this in the cs-localisation pass."""
+    from src.models.candidate import WorkExperience
+    from src.models.job import JobPosting
+
+    job = JobPosting(
+        title="AI Software Engineer",
+        company="Microsoft",
+        role_type="ai_software_engineer",
+        required_skills=["Python", "LLMs", "RAG"],
+        raw_text="AI Software Engineer role at Microsoft",
+    )
+    candidate = CandidateProfile(
+        full_name="Test Candidate",
+        technical_skills=["Python"],
+        experience=[
+            WorkExperience(
+                id="exp-mc",
+                title="Crew Member",
+                company="McDonald's",
+                period="2018 - 2019",
+                source="cv",
+            ),
+            WorkExperience(
+                id="exp-dev",
+                title="Junior Developer",
+                company="Acme",
+                period="2020 - 2024",
+                source="cv",
+            ),
+        ],
+    )
+    report = fake_provider.generate_match_report(job, candidate, AnswersBundle())
+    flagged_ids = {s.entry_id for s in report.suggested_removals}
+    assert "exp-mc" in flagged_ids
+    assert "exp-dev" not in flagged_ids
+    mc_suggestion = next(s for s in report.suggested_removals if s.entry_id == "exp-mc")
+    assert mc_suggestion.section == "experience"
+    assert mc_suggestion.reason
+
+
+def test_match_report_does_not_suggest_removals_for_non_it_role(fake_provider):
+    """If the target role is non-IT (e.g. 'other'), the heuristic must NOT
+    fire - we don't want to suggest dropping a relevant retail job from
+    a retail-manager resume."""
+    from src.models.candidate import WorkExperience
+    from src.models.job import JobPosting
+
+    job = JobPosting(
+        title="Marketing Manager",
+        company="Some Co",
+        role_type="other",
+        required_skills=["Marketing"],
+        raw_text="Marketing Manager",
+    )
+    candidate = CandidateProfile(
+        full_name="X",
+        experience=[
+            WorkExperience(
+                id="exp-mc",
+                title="Crew Member",
+                company="McDonald's",
+                period="2018 - 2019",
+                source="cv",
+            ),
+        ],
+    )
+    report = fake_provider.generate_match_report(job, candidate, AnswersBundle())
+    assert report.suggested_removals == []

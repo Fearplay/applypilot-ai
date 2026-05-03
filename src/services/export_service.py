@@ -91,7 +91,37 @@ def build_export_paths(folder: Path) -> ExportPaths:
 # ---------------------------------------------------------------------------
 # Markdown renderers
 # ---------------------------------------------------------------------------
-def resume_to_markdown(resume: TailoredResume) -> str:
+
+# Section headers used by the Markdown / DOCX resume renderers. Kept in sync
+# with ``_RESUME_LABELS`` (which drives the styled HTML sidebar / main column)
+# so both formats show the same wording for the same output language.
+_RESUME_MD_LABELS: dict[str, dict[str, str]] = {
+    "en": {
+        "summary": "Professional Summary",
+        "skills": "Technical Skills",
+        "projects": "Projects",
+        "experience": "Experience",
+        "education": "Education",
+        "certifications": "Certifications",
+    },
+    "cs": {
+        "summary": "Profesionální shrnutí",
+        "skills": "Technické dovednosti",
+        "projects": "Vlastní projekty",
+        "experience": "Pracovní zkušenosti",
+        "education": "Vzdělání",
+        "certifications": "Certifikáty",
+    },
+}
+
+
+def _md_labels(output_language: str) -> dict[str, str]:
+    code = (output_language or "en").strip().lower()
+    return _RESUME_MD_LABELS.get(code, _RESUME_MD_LABELS["en"])
+
+
+def resume_to_markdown(resume: TailoredResume, output_language: str = "en") -> str:
+    labels = _md_labels(output_language)
     parts: list[str] = []
     parts.append(f"# {resume.name}")
     contact_parts = [resume.contact_line] if resume.contact_line else []
@@ -104,11 +134,11 @@ def resume_to_markdown(resume: TailoredResume) -> str:
     if contact_parts:
         parts.append("  ".join(contact_parts))
 
-    parts.append("\n## Professional Summary\n")
+    parts.append(f"\n## {labels['summary']}\n")
     parts.append(resume.professional_summary)
 
     if resume.technical_skills:
-        parts.append("\n## Technical Skills\n")
+        parts.append(f"\n## {labels['skills']}\n")
         parts.append(", ".join(resume.technical_skills))
 
     def _section(title: str, items: list) -> None:
@@ -123,12 +153,12 @@ def resume_to_markdown(resume: TailoredResume) -> str:
                 parts.append(f"- {b.text}")
             parts.append("")
 
-    _section("Projects", resume.projects)
-    _section("Experience", resume.experience)
-    _section("Education", resume.education)
+    _section(labels["projects"], resume.projects)
+    _section(labels["experience"], resume.experience)
+    _section(labels["education"], resume.education)
 
     if resume.certifications:
-        parts.append("\n## Certifications\n")
+        parts.append(f"\n## {labels['certifications']}\n")
         for cert in resume.certifications:
             parts.append(f"- {cert}")
 
@@ -235,9 +265,13 @@ def evidence_report_to_dict(items: Iterable[EvidenceItem]) -> dict:
 # ---------------------------------------------------------------------------
 # DOCX renderers (python-docx, ATS-friendly)
 # ---------------------------------------------------------------------------
-def resume_to_docx(resume: TailoredResume, path: str | Path) -> None:
+def resume_to_docx(
+    resume: TailoredResume, path: str | Path, output_language: str = "en"
+) -> None:
     from docx import Document
     from docx.shared import Pt
+
+    labels = _md_labels(output_language)
 
     doc = Document()
     style = doc.styles["Normal"]
@@ -264,11 +298,11 @@ def resume_to_docx(resume: TailoredResume, path: str | Path) -> None:
     if contact_bits:
         doc.add_paragraph(s("  |  ".join(contact_bits)))
 
-    doc.add_heading("Professional Summary", level=1)
+    doc.add_heading(labels["summary"], level=1)
     doc.add_paragraph(s(resume.professional_summary))
 
     if resume.technical_skills:
-        doc.add_heading("Technical Skills", level=1)
+        doc.add_heading(labels["skills"], level=1)
         doc.add_paragraph(s(", ".join(resume.technical_skills)))
 
     def _section(title: str, items: list) -> None:
@@ -283,12 +317,12 @@ def resume_to_docx(resume: TailoredResume, path: str | Path) -> None:
             for b in section.bullets:
                 doc.add_paragraph(s(b.text), style="List Bullet")
 
-    _section("Projects", resume.projects)
-    _section("Experience", resume.experience)
-    _section("Education", resume.education)
+    _section(labels["projects"], resume.projects)
+    _section(labels["experience"], resume.experience)
+    _section(labels["education"], resume.education)
 
     if resume.certifications:
-        doc.add_heading("Certifications", level=1)
+        doc.add_heading(labels["certifications"], level=1)
         for cert in resume.certifications:
             doc.add_paragraph(s(cert), style="List Bullet")
 
@@ -344,7 +378,7 @@ _RESUME_LABELS: dict[str, dict[str, str]] = {
         "certifications": "Certifikáty & kurzy",
         "contact": "Kontakt",
         "online": "Online",
-        "tech_stack": "Tech Stack",
+        "tech_stack": "Technologie",
         "languages": "Jazyky",
     },
 }
@@ -384,15 +418,76 @@ _SKILL_GROUP_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
         "framework design", "mentoring",
     )),
 )
-_SKILL_GROUP_CS_LABELS: dict[str, str] = {
-    "Test Automation": "Test Automation",
-    "Languages": "Jazyky",
-    "CI/CD & Tooling": "CI/CD & nástroje",
-    "Frameworks": "Frameworky",
-    "AI / Data": "AI / Data",
-    "Databases": "Databáze",
-    "Methodology": "Metodiky",
-    "Other": "Ostatní",
+
+# Per the user's preference (option A in the localisation plan): skill GROUP
+# labels and skill items themselves stay in their canonical English form
+# regardless of the resume language. Only structural sidebar headers
+# (Tech Stack -> Technologie, Languages -> Jazyky), spoken-language names and
+# the location string get translated in CS mode.
+_SKILL_GROUP_LOCALISED_LABELS: dict[str, dict[str, str]] = {
+    "cs": {},
+    "en": {},
+}
+
+# Spoken language display names per output language. Keys are the canonical
+# English labels emitted by ``profile_dedup._dedup_languages`` and used in
+# ``CandidateProfile.spoken_languages`` (e.g. ``"Czech"``, ``"English"``).
+# Czech-translated values follow standard Czech orthography (lowercase per CS
+# convention for language names).
+_LANGUAGE_DISPLAY_BY_LANG: dict[str, dict[str, str]] = {
+    "cs": {
+        "Czech": "čeština",
+        "English": "angličtina",
+        "Slovak": "slovenština",
+        "German": "němčina",
+        "French": "francouzština",
+        "Spanish": "španělština",
+        "Italian": "italština",
+        "Polish": "polština",
+        "Russian": "ruština",
+        "Ukrainian": "ukrajinština",
+        "Chinese": "čínština",
+        "Japanese": "japonština",
+        "Korean": "korejština",
+        "Portuguese": "portugalština",
+        "Dutch": "nizozemština",
+        "Swedish": "švédština",
+        "Norwegian": "norština",
+        "Danish": "dánština",
+    },
+}
+
+# Common English location tokens we translate when the resume language is
+# Czech. Matched whole-word, case-insensitive, applied AFTER tokenising on
+# whitespace and commas so multi-word names like ``"Czech Republic"`` collapse
+# to ``"Česká republika"``. Unknown tokens pass through unchanged.
+_LOCATION_TRANSLATIONS_CS: dict[str, str] = {
+    "prague": "Praha",
+    "brno": "Brno",
+    "ostrava": "Ostrava",
+    "pilsen": "Plzeň",
+    "plzen": "Plzeň",
+    "bratislava": "Bratislava",
+    "vienna": "Vídeň",
+    "berlin": "Berlín",
+    "warsaw": "Varšava",
+    "budapest": "Budapešť",
+    "remote": "Vzdáleně",
+    "hybrid": "Hybridně",
+    "onsite": "Na pracovišti",
+}
+
+_LOCATION_TRANSLATIONS_CS_MULTI: dict[str, str] = {
+    "czech republic": "Česká republika",
+    "czechia": "Česká republika",
+    "slovak republic": "Slovenská republika",
+    "slovakia": "Slovensko",
+    "united kingdom": "Spojené království",
+    "united states": "Spojené státy",
+    "germany": "Německo",
+    "austria": "Rakousko",
+    "poland": "Polsko",
+    "hungary": "Maďarsko",
 }
 
 _CZECH_DIACRITICS = set("ěščřžýáíéúůťďňĚŠČŘŽÝÁÍÉÚŮŤĎŇ")
@@ -450,9 +545,48 @@ def _esc(text: str | None) -> str:
 
 
 def _localised_group_label(group: str, lang: str) -> str:
-    if lang == "cs":
-        return _SKILL_GROUP_CS_LABELS.get(group, group)
-    return group
+    """Return the display label for a skill group.
+
+    Per the option-A localisation policy, skill GROUP labels stay in English
+    regardless of ``lang`` - this keeps the sidebar visually consistent with
+    industry-standard tech vocabulary (Playwright, Pytest, ...). The map
+    ``_SKILL_GROUP_LOCALISED_LABELS`` is intentionally empty today but kept
+    so future locales can opt-in by populating it.
+    """
+    overrides = _SKILL_GROUP_LOCALISED_LABELS.get(lang, {})
+    return overrides.get(group, group)
+
+
+def _localise_spoken_language(name: str, lang: str) -> str:
+    """Translate a canonical English language label (e.g. ``"Czech"``) into the
+    target ``lang``. Falls back to the input verbatim when no translation
+    exists - never silently drops or invents a name.
+    """
+    overrides = _LANGUAGE_DISPLAY_BY_LANG.get(lang, {})
+    return overrides.get(name, name)
+
+
+def _localise_location(location: str, lang: str) -> str:
+    """Translate common English place names to ``lang`` while preserving
+    structure. Tokenises on commas first, then normalises each chunk against
+    the multi-word and single-word translation maps.
+    """
+    if not location or lang != "cs":
+        return location
+    parts = [p.strip() for p in location.split(",")]
+    out: list[str] = []
+    for part in parts:
+        if not part:
+            continue
+        lowered = part.lower()
+        translated = _LOCATION_TRANSLATIONS_CS_MULTI.get(lowered)
+        if translated is not None:
+            out.append(translated)
+            continue
+        tokens = part.split()
+        rebuilt = [_LOCATION_TRANSLATIONS_CS.get(tok.lower(), tok) for tok in tokens]
+        out.append(" ".join(rebuilt))
+    return ", ".join(out)
 
 
 _STYLED_RESUME_CSS = """
@@ -523,9 +657,10 @@ def _styled_sidebar(
 
     contact_lines: list[str] = []
     if candidate.location:
+        location_text = _localise_location(candidate.location, lang)
         contact_lines.append(
             f'<div class="contact-line"><span class="ic">@</span>'
-            f'<span>{_esc(candidate.location)}</span></div>'
+            f'<span>{_esc(location_text)}</span></div>'
         )
     if candidate.contact_email:
         contact_lines.append(
@@ -589,8 +724,9 @@ def _styled_sidebar(
                     level = raw_level.rstrip(") ").strip()
                     name = name.strip()
                     break
+            display_name = _localise_spoken_language(name, lang)
             rows.append(
-                f'<div class="lang-row"><span>{_esc(name)}</span>'
+                f'<div class="lang-row"><span>{_esc(display_name)}</span>'
                 f'<span class="lvl">{_esc(level)}</span></div>'
             )
         languages_html = (
@@ -747,13 +883,14 @@ def application_summary_to_html(package: GeneratedApplicationPackage) -> str:
     company = package.job_posting.company or ""
     title = f"{role_label}" + (f" at {company}" if company else "")
     score = package.match_report.overall_score
+    docs_lang = package.output_language or "en"
 
     sections_md: list[str] = [
         f"# Application summary - {title}",
         f"<p><span class='badge'>Match score: {score} / 100</span></p>",
         match_report_to_markdown(package.match_report, role_label=role_label),
         "---",
-        resume_to_markdown(package.tailored_resume),
+        resume_to_markdown(package.tailored_resume, output_language=docs_lang),
         "---",
         cover_letter_to_markdown(package.cover_letter),
         "---",
@@ -786,13 +923,19 @@ def export_package(
     )
     paths = build_export_paths(folder)
 
-    paths.resume_md.write_text(resume_to_markdown(package.tailored_resume), encoding="utf-8")
-    resume_to_docx(package.tailored_resume, paths.resume_docx)
+    docs_lang = package.output_language or "en"
+    paths.resume_md.write_text(
+        resume_to_markdown(package.tailored_resume, output_language=docs_lang),
+        encoding="utf-8",
+    )
+    resume_to_docx(
+        package.tailored_resume, paths.resume_docx, output_language=docs_lang
+    )
     paths.resume_html.write_text(
         tailored_resume_to_styled_html(
             package.tailored_resume,
             package.candidate_profile,
-            output_language=package.output_language,
+            output_language=docs_lang,
         ),
         encoding="utf-8",
     )

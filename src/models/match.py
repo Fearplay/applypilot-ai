@@ -24,6 +24,38 @@ class CategoryScores(BaseModel):
     )
 
 
+class SuggestedRemoval(BaseModel):
+    """An entry the AI thinks is unrelated to the target role.
+
+    The user has the final say - everything in this list is surfaced inside
+    :class:`SectionRemovalConfirmDialog` with the box UNTICKED, so nothing
+    actually gets dropped from the resume unless the user actively confirms.
+    """
+
+    model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
+
+    entry_id: str = Field(
+        ...,
+        description=(
+            "Stable id of the WorkExperience / EducationEntry the AI thinks is "
+            "unrelated. Must match an existing entry id on the candidate "
+            "profile - unknown ids are ignored downstream."
+        ),
+    )
+    section: Literal["experience", "education"] = Field(
+        default="experience",
+        description="Which section of the candidate profile the entry lives in.",
+    )
+    reason: str = Field(
+        default="",
+        description=(
+            "Short, user-facing rationale for why this entry feels unrelated "
+            "(e.g. 'McDonald's crew member doesn't relate to a Python "
+            "backend role'). Shown verbatim in the confirmation dialog."
+        ),
+    )
+
+
 class MatchReport(BaseModel):
     """Report produced by the match engine comparing job vs candidate."""
 
@@ -42,6 +74,15 @@ class MatchReport(BaseModel):
     recommended_improvements: list[str] = Field(default_factory=list)
     evidence: list[EvidenceItem] = Field(default_factory=list)
     summary: str = Field(default="", description="Short narrative summary of the match.")
+    suggested_removals: list[SuggestedRemoval] = Field(
+        default_factory=list,
+        description=(
+            "Profile entries the AI judged as unrelated to the target role "
+            "(e.g. fast-food crew job for an IT position). Surfaced to the "
+            "user as DEFAULT-UNTICKED proposals in the pre-generation "
+            "confirmation dialog - never deleted automatically."
+        ),
+    )
 
 
 class ClarifyingQuestion(BaseModel):
@@ -91,6 +132,7 @@ __all__ = [
     "ClarifyingAnswerType",
     "CategoryScores",
     "MatchReport",
+    "SuggestedRemoval",
     "ClarifyingQuestion",
     "ClarifyingAnswer",
     "AnswersBundle",

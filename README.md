@@ -7,6 +7,7 @@ ApplyPilot AI is a Python desktop GenAI application that turns a job posting URL
 | Status | Functional MVP | Default mode | Offline (FakeAIProvider) |
 | --- | --- | --- | --- |
 | Tested on | Python 3.11 / 3.12 / 3.13, Windows / macOS / Linux | Cost when running demos | $0 |
+| Cost per real application | ~$0.035 (gpt-4o-mini) | Cost per 30 apps / month | ~$1.05 |
 
 > Screenshots placeholder - drop your own captures into `docs/screenshots/`:
 >
@@ -274,7 +275,7 @@ Demo / FakeAIProvider mode is always **$0** - no network calls. With a real prov
 137,951 input  x  $0.75 / 1M  =  $0.1035
  23,090 output x  $4.50 / 1M  =  $0.1039
                               ---------------
-                       Total ≈  $0.21  (~5 Kc)
+                       Total ≈  $0.21
 ```
 
 Effective blended price is ~**$1.30 per 1M mixed tokens** at this 85% input / 15% output ratio. One million tokens is therefore roughly six full applications.
@@ -283,20 +284,20 @@ Effective blended price is ~**$1.30 per 1M mixed tokens** at this 85% input / 15
 
 | Apps / month | Input tokens | Output tokens | Cost |
 | --- | ---: | ---: | ---: |
-| 10 | ~1.38 M | ~0.23 M | **~$2.07** (~50 Kc) |
-| 30 | ~4.14 M | ~0.69 M | **~$6.21** (~145 Kc) |
-| 100 | ~13.8 M | ~2.31 M | **~$20.70** (~485 Kc) |
-| 300 | ~41.4 M | ~6.93 M | **~$62.10** (~1,455 Kc) |
+| 10 | ~1.38 M | ~0.23 M | **~$2.07** |
+| 30 | ~4.14 M | ~0.69 M | **~$6.21** |
+| 100 | ~13.8 M | ~2.31 M | **~$20.70** |
+| 300 | ~41.4 M | ~6.93 M | **~$62.10** |
 
 ### Other providers / fallbacks
 
 | Provider / model | One full application | Worst-case prompt cap (~30k in / ~8k out) |
 | --- | --- | --- |
 | **fake provider** (default) | **$0** | **$0** |
-| **gpt-5.4-mini** ($0.75 / $4.50) | ~$0.21 (~5 Kc) | ~$0.06 (~1.50 Kc) |
-| gpt-4o-mini ($0.15 / $0.60) | ~$0.035 (~0.85 Kc) | ~$0.009 (~0.22 Kc) |
-| gpt-4o ($2.50 / $10.00) | ~$0.58 (~13.5 Kc) | ~$0.16 (~3.85 Kc) |
-| Mistral small ($0.20 / $0.60) | ~$0.041 (~0.95 Kc) | ~$0.011 (~0.27 Kc) |
+| **gpt-5.4-mini** ($0.75 / $4.50) | ~$0.21 | ~$0.06 |
+| gpt-4o-mini ($0.15 / $0.60) | ~$0.035 | ~$0.009 |
+| gpt-4o ($2.50 / $10.00) | ~$0.58 | ~$0.16 |
+| Mistral small ($0.20 / $0.60) | ~$0.041 | ~$0.011 |
 | Groq llama-3.3-70b free tier | **$0** | **$0** |
 
 > **Why is the worst case lower than the measured run?** The `_trim()` cap in [`src/ai/prompts.py`](src/ai/prompts.py) limits each *single* prompt to ~12 KB, but the full pipeline issues nine prompts and the candidate summary produced by `analyze_candidate` is fed into every downstream call - so totals above the per-prompt cap are normal in practice.
@@ -460,3 +461,7 @@ This project is licensed under the **MIT License** - see [`LICENSE`](LICENSE) fo
 
 - **PySide6** is licensed under the **GNU LGPL-3.0**. ApplyPilot AI links against PySide6 dynamically and does not modify it, which is permitted by the LGPL. If you redistribute the application, you must keep PySide6 dynamically linked or comply with the LGPL terms (which usually means shipping it as a separate library that the user can replace).
 - All other dependencies are MIT, BSD or Apache 2.0 licensed - see `requirements.txt`.
+
+---
+
+Made with [Cursor](https://cursor.com).

@@ -30,6 +30,26 @@ from src.services.job_parser import parse_job
         ("Mobile Developer", "mobile_developer"),
         ("Security Engineer", "security_engineer"),
         ("Machine Learning Engineer", "machine_learning_engineer"),
+        # New AI / SWE role types added in the cs-localisation pass.
+        # AI Software Engineer must NOT fall through to ML engineer or
+        # other_it - it has its own persona with shipping-AI-features focus.
+        ("AI Software Engineer", "ai_software_engineer"),
+        ("Senior AI Software Engineer", "ai_software_engineer"),
+        ("ML Software Engineer", "ai_software_engineer"),
+        ("AI Platform Engineer", "ai_software_engineer"),
+        # GenAI / LLM engineer flavour - prompts, RAG, agents.
+        ("GenAI Engineer", "genai_engineer"),
+        ("LLM Engineer", "genai_engineer"),
+        ("Generative AI Engineer", "genai_engineer"),
+        ("Prompt Engineer", "genai_engineer"),
+        ("AI Agent Engineer", "genai_engineer"),
+        # Generic mid/senior software engineer (lowest-priority bucket so
+        # the more specific titles above always win).
+        ("Software Engineer", "software_engineer"),
+        ("Senior Software Engineer", "software_engineer"),
+        ("Staff Software Engineer", "software_engineer"),
+        ("Principal Software Engineer", "software_engineer"),
+        ("Tech Lead", "software_engineer"),
         ("Marketing Manager", "other"),
     ],
 )
