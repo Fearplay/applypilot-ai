@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..config import Settings
+from ..i18n import t
 from ..services.history_service import load_history
 from .theme import Tokens
 
@@ -38,7 +39,7 @@ class HistoryPage(QWidget):
         layout.setSpacing(14)
 
         head = QLabel(
-            f"Loaded from <code>{Path(settings.output_dir) / 'history.json'}</code>"
+            t("history.loaded_from", path=Path(settings.output_dir) / "history.json")
         )
         head.setTextFormat(Qt.RichText)
         head.setStyleSheet(f"color: {Tokens.text_muted}; font-size: 12px;")
@@ -58,7 +59,13 @@ class HistoryPage(QWidget):
 
         self._table = QTableWidget(0, 5)
         self._table.setHorizontalHeaderLabels(
-            ["Date", "Company", "Role", "Score", "Folder"]
+            [
+                t("history.col.date"),
+                t("history.col.company"),
+                t("history.col.role"),
+                t("history.col.score"),
+                t("history.col.folder"),
+            ]
         )
         self._table.setShowGrid(False)
         self._table.verticalHeader().setVisible(False)
@@ -84,15 +91,13 @@ class HistoryPage(QWidget):
         ev.setContentsMargins(40, 60, 40, 60)
         ev.setSpacing(8)
         ev.addStretch(1)
-        title = QLabel("No analyses yet")
+        title = QLabel(t("history.empty.title"))
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet(
             f"color: {Tokens.text}; font-size: 16px; font-weight: 600;"
         )
         ev.addWidget(title)
-        sub = QLabel(
-            "Run your first analysis from the Setup tab and it will appear here."
-        )
+        sub = QLabel(t("history.empty.body"))
         sub.setAlignment(Qt.AlignCenter)
         sub.setWordWrap(True)
         sub.setStyleSheet(f"color: {Tokens.text_muted}; font-size: 12px;")
@@ -103,19 +108,16 @@ class HistoryPage(QWidget):
         # ----- actions
         bar = QHBoxLayout()
         bar.setSpacing(8)
-        refresh = QPushButton("Refresh")
+        refresh = QPushButton(t("history.refresh"))
         refresh.clicked.connect(self.refresh)
         bar.addWidget(refresh)
         bar.addStretch(1)
-        open_folder_btn = QPushButton("Open selected folder")
+        open_folder_btn = QPushButton(t("history.open_folder"))
         open_folder_btn.clicked.connect(self._on_open_clicked)
         bar.addWidget(open_folder_btn)
-        open_in_app_btn = QPushButton("Open in app")
+        open_in_app_btn = QPushButton(t("history.open_in_app"))
         open_in_app_btn.setProperty("variant", "primary")
-        open_in_app_btn.setToolTip(
-            "Re-load the saved markdown / HTML files into the Documents tab "
-            "without running the AI again."
-        )
+        open_in_app_btn.setToolTip(t("history.open_in_app.tip"))
         open_in_app_btn.clicked.connect(self._on_open_in_app_clicked)
         bar.addWidget(open_in_app_btn)
         layout.addLayout(bar)

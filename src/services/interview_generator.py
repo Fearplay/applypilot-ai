@@ -11,8 +11,11 @@ def generate_interview_questions(
     provider: BaseAIProvider,
     job: JobPosting,
     candidate: CandidateProfile,
+    output_language: str = "en",
 ) -> list[InterviewQuestion]:
-    return provider.generate_interview_questions(job, candidate)
+    return provider.generate_interview_questions(
+        job, candidate, output_language=output_language
+    )
 
 
 __all__ = ["generate_interview_questions"]

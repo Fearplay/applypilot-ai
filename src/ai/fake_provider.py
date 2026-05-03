@@ -467,7 +467,10 @@ class FakeAIProvider(BaseAIProvider):
 
     # --------------------------------------------------------- clarifying Q
     def generate_clarifying_questions(
-        self, job: JobPosting, candidate: CandidateProfile
+        self,
+        job: JobPosting,
+        candidate: CandidateProfile,
+        output_language: str = "en",
     ) -> list[ClarifyingQuestion]:
         bank = _QUESTION_BANK.get(job.role_type, _QUESTION_BANK["software_qa_engineer"])
         candidate_pool: list[str] = (
@@ -512,6 +515,7 @@ class FakeAIProvider(BaseAIProvider):
         candidate: CandidateProfile,
         answers: AnswersBundle,
         evidence: Sequence[EvidenceItem] = (),
+        output_language: str = "en",
     ) -> MatchReport:
         candidate_pool = (
             list(candidate.technical_skills)
@@ -592,6 +596,7 @@ class FakeAIProvider(BaseAIProvider):
         candidate: CandidateProfile,
         answers: AnswersBundle,
         evidence: Sequence[EvidenceItem] = (),
+        output_language: str = "en",
     ) -> TailoredResume:
         relevant_first = sorted(
             candidate.technical_skills,
@@ -675,6 +680,7 @@ class FakeAIProvider(BaseAIProvider):
         job: JobPosting,
         candidate: CandidateProfile,
         answers: AnswersBundle,
+        output_language: str = "en",
     ) -> CoverLetter:
         company = job.company or "your team"
         role_label = job.title or ROLE_TYPE_LABELS.get(job.role_type, "the role")
@@ -712,7 +718,10 @@ class FakeAIProvider(BaseAIProvider):
 
     # --------------------------------------------------------- interview Q
     def generate_interview_questions(
-        self, job: JobPosting, candidate: CandidateProfile
+        self,
+        job: JobPosting,
+        candidate: CandidateProfile,
+        output_language: str = "en",
     ) -> list[InterviewQuestion]:
         bank = _interview_bank(job.role_type)
         return [
@@ -730,7 +739,10 @@ class FakeAIProvider(BaseAIProvider):
 
     # ------------------------------------------------------------ gaps
     def generate_skill_gap_plan(
-        self, match_report: MatchReport, job: JobPosting
+        self,
+        match_report: MatchReport,
+        job: JobPosting,
+        output_language: str = "en",
     ) -> list[SkillGap]:
         plan: list[SkillGap] = []
         for skill in match_report.missing_requirements[:6]:

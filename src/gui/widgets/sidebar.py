@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...i18n import t
 from ..theme import Tokens
 from .status_chip import ChipVariant, StatusChip
 
@@ -74,7 +75,7 @@ class _SidebarRow(QFrame):
             self._subtitle = None
         outer.addLayout(text_box, stretch=1)
 
-        self._chip = StatusChip("Idle", variant="idle", parent=self)
+        self._chip = StatusChip(t("chip.idle"), variant="idle", parent=self)
         outer.addWidget(self._chip, alignment=Qt.AlignVCenter)
 
         self._apply_style()
@@ -90,6 +91,11 @@ class _SidebarRow(QFrame):
 
     def set_status(self, text: str, variant: ChipVariant) -> None:
         self._chip.set_variant(variant, text=text)
+
+    def set_titles(self, title: str, subtitle: str) -> None:
+        self._title.setText(title)
+        if self._subtitle is not None:
+            self._subtitle.setText(subtitle)
 
     # ---------------------------------------------------------------- helpers
     def _apply_style(self) -> None:
@@ -126,7 +132,7 @@ class Sidebar(QFrame):
         self,
         items: list[SidebarItem],
         title: str = "ApplyPilot",
-        section_label: str = "WORKFLOW",
+        section_label: str | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -145,13 +151,13 @@ class Sidebar(QFrame):
         )
         outer.addWidget(title_lbl)
 
-        section_lbl = QLabel(section_label)
-        section_lbl.setProperty("role", "section-label")
-        section_lbl.setStyleSheet(
+        self._section_lbl = QLabel(section_label or t("sidebar.workflow"))
+        self._section_lbl.setProperty("role", "section-label")
+        self._section_lbl.setStyleSheet(
             f"color: {Tokens.text_dim}; font-size: 10px; font-weight: 700;"
             f" letter-spacing: 1.4px; padding-top: 6px;"
         )
-        outer.addWidget(section_lbl)
+        outer.addWidget(self._section_lbl)
 
         self._rows: dict[str, _SidebarRow] = {}
         for item in items:
@@ -162,15 +168,15 @@ class Sidebar(QFrame):
 
         outer.addItem(QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding))
 
-        footer_lbl = QLabel("Activity")
-        footer_lbl.setProperty("role", "section-label")
-        footer_lbl.setStyleSheet(
+        self._footer_lbl = QLabel(t("sidebar.activity"))
+        self._footer_lbl.setProperty("role", "section-label")
+        self._footer_lbl.setStyleSheet(
             f"color: {Tokens.text_dim}; font-size: 10px; font-weight: 700;"
             f" letter-spacing: 1.4px;"
         )
-        outer.addWidget(footer_lbl)
+        outer.addWidget(self._footer_lbl)
 
-        self._activity = QLabel("Ready")
+        self._activity = QLabel(t("sidebar.activity.ready"))
         self._activity.setWordWrap(True)
         self._activity.setStyleSheet(
             f"color: {Tokens.text_muted}; font-size: 11px;"
@@ -189,7 +195,23 @@ class Sidebar(QFrame):
             row.set_status(text, variant)
 
     def set_activity(self, text: str) -> None:
-        self._activity.setText(text or "Ready")
+        self._activity.setText(text or t("sidebar.activity.ready"))
+
+    def update_row_titles(self, titles: dict[str, tuple[str, str]]) -> None:
+        """Replace the title/subtitle labels of existing rows in-place.
+
+        ``titles`` maps a row key to ``(title, subtitle)``. Used by the language
+        switch so existing rows pick up new translations without rebuilding
+        the whole sidebar (which would lose the active highlight + chips).
+        """
+        for key, row in self._rows.items():
+            pair = titles.get(key)
+            if not pair:
+                continue
+            new_title, new_subtitle = pair
+            row.set_titles(new_title, new_subtitle)
+        self._section_lbl.setText(t("sidebar.workflow"))
+        self._footer_lbl.setText(t("sidebar.activity"))
 
 
 __all__ = ["Sidebar", "SidebarItem"]

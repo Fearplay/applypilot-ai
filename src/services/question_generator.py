@@ -12,9 +12,12 @@ def generate_questions(
     job: JobPosting,
     candidate: CandidateProfile,
     existing_answers: AnswersBundle | None = None,
+    output_language: str = "en",
 ) -> list[ClarifyingQuestion]:
     """Ask the provider for clarifying questions, filter ones already answered."""
-    questions = provider.generate_clarifying_questions(job, candidate)
+    questions = provider.generate_clarifying_questions(
+        job, candidate, output_language=output_language
+    )
     if not existing_answers or not existing_answers.answers:
         return questions
     answered_skills = {a.skill for a in existing_answers.answers if a.skill}

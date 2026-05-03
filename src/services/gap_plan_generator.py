@@ -11,8 +11,11 @@ def generate_skill_gap_plan(
     provider: BaseAIProvider,
     match_report: MatchReport,
     job: JobPosting,
+    output_language: str = "en",
 ) -> list[SkillGap]:
-    return provider.generate_skill_gap_plan(match_report, job)
+    return provider.generate_skill_gap_plan(
+        match_report, job, output_language=output_language
+    )
 
 
 __all__ = ["generate_skill_gap_plan"]

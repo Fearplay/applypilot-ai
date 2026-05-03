@@ -144,23 +144,37 @@ _GLOBAL_RULES = (
     "You are powering ApplyPilot AI, a desktop assistant that helps a real "
     "candidate apply for a real job. Follow these strict rules at all times:\n"
     "1. NEVER invent experiences, jobs, certifications or skills that are not "
-    "in the candidate's CV, LinkedIn, GitHub or user answers.\n"
+    "in the candidate's CV, LinkedIn, GitHub or user answers. If a fact is "
+    "not in the inputs, it does NOT exist - do not extrapolate or assume.\n"
     "2. If a required skill is not backed by evidence, treat it as a gap or "
-    "a clarifying question - do not assume.\n"
+    "a clarifying question. Be honest about what is missing rather than "
+    "filling holes with plausible-sounding text.\n"
     "3. Always return STRICT JSON that matches the requested schema. No "
     "markdown fences, no commentary, no extra fields.\n"
     "4. Use neutral, professional, ATS-friendly prose. Prefer concrete, "
     "measurable bullets ('reduced regression cycle by 30%') over vague claims.\n"
-    "5. Your tone matches the persona below.\n"
-    "6. LANGUAGE MATCHING: detect the language of the JOB POSTING text and "
-    "produce ALL human-facing outputs (professional summary, resume bullets, "
-    "cover letter, interview questions, gap rationales, recommendations) in "
-    "the SAME language. If the job is written in Czech, write Czech. "
-    "Otherwise default to English. Schema field names, RoleType values and "
-    "any technical enums (e.g. 'practical_experience', 'critical') stay in "
-    "English regardless of the job language. Never mix languages within a "
-    "single human-facing field."
+    "5. Your tone matches the persona below. You are an HR / recruiter expert "
+    "who tailors the resume, cover letter and interview prep to THIS specific "
+    "position - not a generic application.\n"
+    "6. LANGUAGE POLICY: input documents (job posting, CV, LinkedIn export, "
+    "GitHub READMEs, user answers) may be written in Czech, English, or a "
+    "mix of both. You read both languages natively and never lose meaning "
+    "when crossing them. If the user answers a clarifying question in one "
+    "language but the requested OUTPUT_LANGUAGE is different, translate the "
+    "answer faithfully into the output language - do not invent extra "
+    "detail. Schema field names, RoleType values and technical enums "
+    "(e.g. 'practical_experience', 'critical') always stay in English. "
+    "Otherwise the OUTPUT_LANGUAGE directive at the end of each user prompt "
+    "is authoritative for every human-facing string."
 )
+
+
+def _language_directive(output_language: str | None) -> str:
+    """Return a one-liner the prompts append to lock the output language."""
+    code = (output_language or "en").strip().lower()
+    if code == "cs":
+        return "OUTPUT_LANGUAGE: Czech. Write every human-facing string in Czech."
+    return "OUTPUT_LANGUAGE: English. Write every human-facing string in English."
 
 
 def system_prompt_for(role: RoleType, extra: str = "") -> str:
@@ -268,16 +282,21 @@ def analyze_candidate_user_prompt(
 
 
 def clarifying_questions_user_prompt(
-    job: JobPosting, candidate: CandidateProfile
+    job: JobPosting,
+    candidate: CandidateProfile,
+    output_language: str = "en",
 ) -> str:
     return (
         "Compare the JobPosting requirements against the CandidateProfile. "
         "For every required or nice_to_have skill that is NOT clearly evidenced "
         "in the candidate inputs, generate a ClarifyingQuestion the user can "
         "answer to confirm or reject the skill. Limit to 8 questions, ordered "
-        "by importance for this role.\n\n"
+        "by importance for this role. The user will read these questions, so "
+        "phrase them naturally and provide concrete option strings when "
+        "answer_type is single_choice / yes_no / multi_choice.\n\n"
         "JOB:\n" + _dump_job(job) + "\n\n"
-        "CANDIDATE:\n" + _dump(candidate)
+        "CANDIDATE:\n" + _dump(candidate) + "\n\n"
+        + _language_directive(output_language)
     )
 
 
@@ -286,17 +305,19 @@ def match_report_user_prompt(
     candidate: CandidateProfile,
     answers: AnswersBundle,
     evidence: list[EvidenceItem],
+    output_language: str = "en",
 ) -> str:
     return (
         "Produce a MatchReport that scores how well the candidate matches the "
         "job. Use ONLY the evidence and confirmed user answers - do not score "
-        "skills the candidate has not demonstrated. Write any free-text "
-        "fields (summary, recommended_improvements) in the SAME language as "
-        "the job posting (Czech or English).\n\n"
+        "skills the candidate has not demonstrated. If a user answer arrived "
+        "in a different language than OUTPUT_LANGUAGE, translate it - do not "
+        "drop or fabricate detail.\n\n"
         "JOB:\n" + _dump_job(job) + "\n\n"
         "CANDIDATE:\n" + _dump(candidate) + "\n\n"
         "USER ANSWERS:\n" + _dump(answers) + "\n\n"
-        "EVIDENCE:\n" + _dump(evidence)
+        "EVIDENCE:\n" + _dump(evidence) + "\n\n"
+        + _language_directive(output_language)
     )
 
 
@@ -305,6 +326,7 @@ def resume_user_prompt(
     candidate: CandidateProfile,
     answers: AnswersBundle,
     evidence: list[EvidenceItem],
+    output_language: str = "en",
 ) -> str:
     return (
         "Produce a TailoredResume in the schema. Tailor it to the job:\n"
@@ -317,14 +339,13 @@ def resume_user_prompt(
         "- Professional summary should be 2-3 sentences, role-targeted.\n"
         "- Set role_targeted_for to the job title.\n"
         "- Do NOT include the candidate's contact details twice.\n"
-        "- LANGUAGE: write the professional_summary, every bullet text and "
-        "every section subtitle in the SAME language as the job posting "
-        "(Czech or English). Skill / technology names stay in their canonical "
-        "form (e.g. 'Playwright', 'CI/CD').\n\n"
+        "- Skill / technology names stay in their canonical form "
+        "(e.g. 'Playwright', 'CI/CD') regardless of OUTPUT_LANGUAGE.\n\n"
         "JOB:\n" + _dump_job(job) + "\n\n"
         "CANDIDATE:\n" + _dump(candidate) + "\n\n"
         "USER ANSWERS:\n" + _dump(answers) + "\n\n"
-        "EVIDENCE:\n" + _dump(evidence)
+        "EVIDENCE:\n" + _dump(evidence) + "\n\n"
+        + _language_directive(output_language)
     )
 
 
@@ -332,46 +353,55 @@ def cover_letter_user_prompt(
     job: JobPosting,
     candidate: CandidateProfile,
     answers: AnswersBundle,
+    output_language: str = "en",
 ) -> str:
     return (
         "Write a CoverLetter that is concrete, specific to the company and "
         "role, 3-4 paragraphs maximum. Reference at most TWO real "
-        "achievements / projects from the candidate. Write the salutation, "
-        "every paragraph and the closing in the SAME language as the job "
-        "posting (Czech or English).\n\n"
+        "achievements / projects from the candidate. Salutation, body and "
+        "closing must all sit inside the same OUTPUT_LANGUAGE.\n\n"
         "JOB:\n" + _dump_job(job) + "\n\n"
         "CANDIDATE:\n" + _dump(candidate) + "\n\n"
-        "USER ANSWERS:\n" + _dump(answers)
+        "USER ANSWERS:\n" + _dump(answers) + "\n\n"
+        + _language_directive(output_language)
     )
 
 
 def interview_questions_user_prompt(
-    job: JobPosting, candidate: CandidateProfile
+    job: JobPosting,
+    candidate: CandidateProfile,
+    output_language: str = "en",
 ) -> str:
     return (
         "Generate exactly 10 likely interview questions for this candidate "
         "applying to this role. For each: explain why_asked (what the "
         "interviewer is probing) and a suggested_answer grounded in the "
         "candidate's profile. Keep a balance between technical, behavioural, "
-        "process and culture categories. Write the question, why_asked and "
-        "suggested_answer in the SAME language as the job posting (Czech or "
-        "English). The category enum stays in English ('technical' etc.).\n\n"
+        "process and culture categories. The category enum stays in English "
+        "('technical' etc.); question, why_asked and suggested_answer follow "
+        "OUTPUT_LANGUAGE.\n\n"
         "JOB:\n" + _dump_job(job) + "\n\n"
-        "CANDIDATE:\n" + _dump(candidate)
+        "CANDIDATE:\n" + _dump(candidate) + "\n\n"
+        + _language_directive(output_language)
     )
 
 
-def skill_gap_user_prompt(match_report: MatchReport, job: JobPosting) -> str:
+def skill_gap_user_prompt(
+    match_report: MatchReport,
+    job: JobPosting,
+    output_language: str = "en",
+) -> str:
     return (
         "Produce a SkillGap[] list. For every gap in match_report (missing or "
         "weak), output a SkillGap with importance ('critical' / 'important' / "
         "'nice_to_have'), a short rationale, a learning_path of 3-5 concrete "
         "steps, and a suggested_project the candidate could build to fill the "
-        "gap. Skip skills that are already strong. Write rationale, "
-        "learning_path entries and suggested_project in the SAME language as "
-        "the job posting (Czech or English). Importance stays in English.\n\n"
+        "gap. Skip skills that are already strong. Importance stays in "
+        "English; rationale, learning_path entries and suggested_project "
+        "follow OUTPUT_LANGUAGE.\n\n"
         "MATCH REPORT:\n" + _dump(match_report) + "\n\n"
-        "JOB:\n" + _dump_job(job)
+        "JOB:\n" + _dump_job(job) + "\n\n"
+        + _language_directive(output_language)
     )
 
 

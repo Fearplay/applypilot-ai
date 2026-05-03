@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...i18n import t
 from ..theme import Tokens
 
 
@@ -50,22 +51,22 @@ class FileDropZone(QFrame):
         layout.addWidget(self._label)
 
         self._hint = QLabel(
-            f"Drag &amp; drop a file ({', '.join(self._extensions)}) or browse."
+            t("drop.hint", exts=", ".join(self._extensions))
         )
         self._hint.setStyleSheet(f"color: {Tokens.text_muted}; font-size: 12px;")
         layout.addWidget(self._hint)
 
         row = QHBoxLayout()
         row.setSpacing(6)
-        self._path_label = QLabel("No file selected")
+        self._path_label = QLabel(t("drop.empty"))
         self._path_label.setStyleSheet(f"color: {Tokens.text_muted}; font-size: 12px;")
         row.addWidget(self._path_label, stretch=1)
 
-        browse = QPushButton("Browse...")
+        browse = QPushButton(t("drop.browse"))
         browse.clicked.connect(self._on_browse)
         row.addWidget(browse)
 
-        clear = QPushButton("Clear")
+        clear = QPushButton(t("drop.clear"))
         clear.setProperty("variant", "ghost")
         clear.clicked.connect(self.clear)
         row.addWidget(clear)
@@ -78,7 +79,7 @@ class FileDropZone(QFrame):
 
     def clear(self) -> None:
         self._current_path = None
-        self._path_label.setText("No file selected")
+        self._path_label.setText(t("drop.empty"))
         self._path_label.setStyleSheet(
             f"color: {Tokens.text_muted}; font-size: 12px;"
         )
@@ -90,7 +91,7 @@ class FileDropZone(QFrame):
         p = Path(path)
         if not self._allowed(p):
             self._path_label.setText(
-                f"Unsupported file type: {p.suffix or '(no ext)'}"
+                t("drop.unsupported", suffix=p.suffix or "(no ext)")
             )
             self._path_label.setStyleSheet(
                 f"color: {Tokens.warn}; font-size: 12px;"
@@ -126,7 +127,7 @@ class FileDropZone(QFrame):
         filt = (
             "Supported (" + " ".join(f"*{e}" for e in self._extensions) + ");;All files (*)"
         )
-        path, _ = QFileDialog.getOpenFileName(self, "Select file", "", filt)
+        path, _ = QFileDialog.getOpenFileName(self, t("drop.dialog.title"), "", filt)
         if path:
             self.set_path(Path(path))
 

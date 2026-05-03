@@ -18,6 +18,7 @@ def compute_match(
     job: JobPosting,
     candidate: CandidateProfile,
     answers: AnswersBundle | None = None,
+    output_language: str = "en",
 ) -> tuple[MatchReport, EvidenceCheckResult]:
     """Run the evidence checker first, then ask the AI to score the match.
 
@@ -26,7 +27,9 @@ def compute_match(
     """
     answers = answers or AnswersBundle()
     evidence = check_evidence(job, candidate, answers)
-    report = provider.generate_match_report(job, candidate, answers, evidence.items)
+    report = provider.generate_match_report(
+        job, candidate, answers, evidence.items, output_language=output_language
+    )
 
     # Ensure the AI report's evidence list is at least as rich as ours.
     if not report.evidence:
