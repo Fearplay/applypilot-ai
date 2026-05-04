@@ -1,0 +1,40 @@
+---
+description: Keep build_exe.bat in sync with requirements.txt and dynamic imports
+alwaysApply: true
+---
+
+# Build script sync
+
+Whenever a change introduces, removes, or upgrades a third-party Python dependency that is reachable from `app.py` at runtime, the corresponding flag in [`build_exe.bat`](../../build_exe.bat) MUST be updated in the SAME commit. The packaged `dist/ApplyPilotAI.exe` must never miss a module that the source tree imports.
+
+This rule is scoped to the build script; the matching source-of-truth update for the venv install lives in [`requirements-sync.mdc`](requirements-sync.mdc).
+
+## When to update build_exe.bat
+
+You MUST touch `build_exe.bat` when ANY of these is true in the same change:
+
+- You added a new top-level `import <package>` (or `from <package> import ...`) that PyInstaller's static analysis cannot see by walking `app.py` (entry-point plugins, dynamically-imported backends, packages loaded via `importlib`, GUI plugins, etc.).
+- You added a dependency that ships data files PyInstaller would otherwise drop (translations, JSON schemas, browser binaries, wheel-bundled `.qml` / `.dll` / `.so`, ICU data, fonts, etc.).
+- You added a dependency that registers entry points used at runtime (e.g. `keyring` backends, `playwright` browsers, codecs).
+- You renamed or moved a top-level package the EXE relies on.
+
+## Procedure
+
+1. Identify the package name PyInstaller needs.
+2. Pick the right flag:
+   - `--collect-all <pkg>` for libraries that ship submodules + data (PySide6, playwright, keyring).
+   - `--hidden-import <pkg.path>` for ONE specific module loaded dynamically (e.g. `keyring.backends.Windows`).
+   - `--add-data "src\subpkg;src\subpkg"` for first-party data folders that need to ship alongside the EXE (i18n, sample data, assets).
+3. Insert the flag into the existing `pyinstaller` invocation in `build_exe.bat`, keeping flags grouped logically (collect / hidden / data).
+4. If the dependency is dev-only (PyInstaller, ruff, mypy, pytest), do NOT add a flag; only update the dev section in `requirements.txt`.
+
+## Forbidden
+
+- Adding a runtime third-party import without checking whether it needs a `--hidden-import` or `--collect-all`.
+- Removing flags from `build_exe.bat` without removing the underlying `import` first.
+- Hard-coding a Python interpreter path - the script must keep using `py -3.13` / `py -3.12` / `py -3.11` discovery.
+- Editing `build_exe.bat` to invoke commands that require an interactive prompt; CI / the auto-build hook runs unattended.
+
+## Retroactive application
+
+If you notice an existing import that the EXE quietly fails to package (typically because a previous PR forgot the hidden-import flag), fix it in the current PR even if you did not introduce the bug.

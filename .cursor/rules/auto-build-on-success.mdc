@@ -1,0 +1,36 @@
+---
+description: Build a fresh dist/ApplyPilotAI.exe at the end of every successful task
+alwaysApply: true
+---
+
+# Auto-build on task success
+
+When you have completed all the editing and testing for a task and are about to tell the user "done", run [`build_exe.bat`](../../build_exe.bat) via the Shell tool BEFORE handing off. The user wants to immediately double-click the freshly built EXE to verify the change in the real, packaged binary they ship - not just in a dev-mode `python app.py` run.
+
+## Required pre-conditions
+
+Trigger the build only when ALL of the following are true:
+
+- Every code or asset change requested by the user has landed.
+- The relevant test suite (`pytest`) is green; lint/type errors introduced by the change are fixed.
+- You are about to send the final summary message of the turn.
+
+## Skip cases
+
+You MAY skip the auto-build only when one of these is unambiguously true:
+
+- The change is documentation-only (Markdown / `.cursor/rules/` / docstrings) and does not touch any file that ends up inside the EXE.
+- The user explicitly said "don't build the EXE" / "skip the build" / "neskládej exe" / equivalent.
+- You're running in an environment that cannot execute Windows batch files (non-Windows agent host); leave a one-line note in the final reply explaining the skip.
+
+## Procedure
+
+1. Spawn the build with the Shell tool: `build_exe.bat` from the repo root. Use a long `block_until_ms` (60 000 ms) because the first build of the day rebuilds the venv and downloads Playwright Chromium.
+2. Wait for the script to finish. If it prints `BUILD OK`, mention `dist\ApplyPilotAI.exe` in your final message so the user can launch it directly.
+3. If it prints `BUILD FAILED`, treat it as a regression in the work you just did. Read the tail of the build output, fix the root cause (typical culprits: missing `--hidden-import`, broken import in `app.py`, new data folder not in `--add-data`), re-run the build, and only then tell the user "done". Do NOT report success on a failed build.
+
+## Forbidden
+
+- Reporting the task as complete while `build_exe.bat` is still failing or has never been run for the change.
+- Editing `build_exe.bat` to comment out the failing PyInstaller flag instead of fixing the underlying issue.
+- Skipping the build because it "takes too long" - use the long `block_until_ms` and wait it out.

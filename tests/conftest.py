@@ -40,6 +40,42 @@ def block_real_ai(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Hermetic preferences + secrets
+# ---------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def isolate_user_state(monkeypatch, tmp_path):
+    """Redirect ``~/.applypilot`` to a per-test tmp dir.
+
+    Without this every test that calls ``load_settings`` would inherit
+    whatever the developer last clicked in the in-app Settings dialog
+    (provider, base URL, model, API key) - a flaky, environment-dependent
+    failure. Isolating the prefs file + the secrets fallback keeps the
+    suite hermetic.
+    """
+    from src import config as config_mod
+    from src.utils import preferences as prefs_mod
+    from src.utils import secrets as secrets_mod
+
+    fake_dir = tmp_path / ".applypilot"
+    monkeypatch.setattr(prefs_mod, "_DEFAULT_DIR", fake_dir)
+    monkeypatch.setattr(prefs_mod, "_DEFAULT_FILE", fake_dir / "state.json")
+    # Redirect the JSON secrets fallback to a per-test path and force the
+    # OS keyring lookup to report unavailable. Together this guarantees
+    # ``get_secret`` returns "" unless the test wrote to the fake store
+    # itself, so no test inherits the developer's real API keys.
+    fake_secrets = fake_dir / "secrets.json"
+    monkeypatch.setattr(secrets_mod, "_json_path", lambda: fake_secrets)
+    monkeypatch.setattr(secrets_mod, "_try_keyring", lambda: None)
+    # Also short-circuit ``load_dotenv`` so the developer's local .env
+    # (with a real OpenAI key) never leaks into a test that intentionally
+    # deletes AI_API_KEY via monkeypatch. Without this the .env values
+    # silently win against ``monkeypatch.delenv`` and tests get a real
+    # provider instead of the FakeAIProvider they expect.
+    monkeypatch.setattr(config_mod, "load_dotenv", lambda *args, **kwargs: False)
+    yield
+
+
+# ---------------------------------------------------------------------------
 # Common fixtures
 # ---------------------------------------------------------------------------
 @pytest.fixture

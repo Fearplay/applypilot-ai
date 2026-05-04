@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from dotenv import load_dotenv
 
@@ -128,21 +128,39 @@ def load_settings(env_file: str | os.PathLike[str] | None = None) -> Settings:
     if dotenv_path.exists():
         load_dotenv(dotenv_path)
 
-    raw_provider = os.getenv("AI_PROVIDER", "fake")
+    # Non-secret AI defaults can also live in ~/.applypilot/state.json
+    # so the in-app Settings dialog persists across restarts without
+    # touching .env. Env vars still win to keep CI / power-user overrides
+    # working unchanged. Secrets (API key, GitHub token) take a separate
+    # keyring path further down.
+    pref_provider = _read_pref_safe("ai_provider_raw")
+    pref_base_url = _read_pref_safe("ai_base_url")
+    pref_model = _read_pref_safe("ai_model")
+    pref_confirm_refine = _read_pref_safe("ai_confirm_refine")
+
+    raw_provider = os.getenv("AI_PROVIDER") or pref_provider or "fake"
     output_dir_raw = os.getenv("APPLYPILOT_OUTPUT_DIR", "outputs")
     output_dir = Path(output_dir_raw)
     if not output_dir.is_absolute():
         output_dir = root / output_dir
 
+    # Secrets first: the in-app Settings dialog writes API keys to the
+    # OS keyring (or ~/.applypilot/secrets.json fallback). When the same
+    # name is also set via env / .env the env wins so CI / power users
+    # can still override locally without touching the keyring.
+    api_key_from_secrets = _read_secret_safe("AI_API_KEY")
+    github_token_from_secrets = _read_secret_safe("GITHUB_TOKEN")
+    base_url_default = pref_base_url or "https://api.openai.com/v1"
+    model_default = pref_model or "gpt-4o-mini"
     return Settings(
         project_root=root,
         output_dir=output_dir,
         log_level=os.getenv("APPLYPILOT_LOG_LEVEL", "INFO").upper(),
         ai_provider=_normalise_provider(raw_provider),
         ai_provider_raw=raw_provider,
-        ai_base_url=os.getenv("AI_BASE_URL", "https://api.openai.com/v1").rstrip("/"),
-        ai_api_key=os.getenv("AI_API_KEY", "").strip(),
-        ai_model=os.getenv("AI_MODEL", "gpt-4o-mini").strip(),
+        ai_base_url=(os.getenv("AI_BASE_URL") or base_url_default).rstrip("/"),
+        ai_api_key=(os.getenv("AI_API_KEY") or api_key_from_secrets or "").strip(),
+        ai_model=(os.getenv("AI_MODEL") or model_default).strip(),
         # 180 s default (was 60 s) so analyze_candidate against a long CV
         # doesn't time out mid-stream and force a billable retry. The
         # provider already short-circuits the json_schema -> json_object
@@ -152,10 +170,33 @@ def load_settings(env_file: str | os.PathLike[str] | None = None) -> Settings:
         ai_temperature=_float_env("AI_TEMPERATURE", 0.2),
         ai_request_log=_bool_env("AI_REQUEST_LOG", True),
         ai_debug_prompts=_bool_env("AI_DEBUG_PROMPTS", False),
-        ai_confirm_refine=_bool_env("AI_CONFIRM_REFINE", True),
+        ai_confirm_refine=_bool_env(
+            "AI_CONFIRM_REFINE",
+            pref_confirm_refine if isinstance(pref_confirm_refine, bool) else True,
+        ),
         ui_language=_resolve_ui_language(),
-        github_token=os.getenv("GITHUB_TOKEN", "").strip(),
+        github_token=(os.getenv("GITHUB_TOKEN") or github_token_from_secrets or "").strip(),
     )
+
+
+def _read_secret_safe(name: str) -> str:
+    """Best-effort secret read; never raises so settings always load."""
+    try:
+        from .utils.secrets import get_secret  # noqa: PLC0415
+
+        return get_secret(name)
+    except Exception:  # pragma: no cover - keyring/JSON lookup must never block startup
+        return ""
+
+
+def _read_pref_safe(name: str) -> Any:
+    """Best-effort preference read; never raises so settings always load."""
+    try:
+        from .utils.preferences import get_preference  # noqa: PLC0415
+
+        return get_preference(name)
+    except Exception:  # pragma: no cover - prefs file must never block startup
+        return None
 
 
 def _resolve_ui_language() -> str:

@@ -30,5 +30,17 @@ python-docx>=1.1,<2.0
 # Markdown -> HTML for the application_summary.html export
 markdown>=3.6,<4.0
 
+# Cross-platform OS keyring for storing API keys outside .env. Windows
+# Credential Manager / macOS Keychain / Linux Secret Service all speak
+# the same Python API so the in-app Settings dialog can save the user's
+# AI_API_KEY / GITHUB_TOKEN encrypted at rest.
+keyring~=25.4
+
 # Testing (no real AI calls in tests)
 pytest>=8.0,<9.0
+
+# --- dev / build tooling ---
+# Used only by build_exe.bat to produce dist/ApplyPilotAI.exe; not
+# required at runtime. The auto-build hook installs it into a separate
+# .venv-build virtualenv so end users never have to think about it.
+pyinstaller~=6.10
