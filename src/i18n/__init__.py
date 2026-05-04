@@ -132,6 +132,13 @@ _STRINGS: dict[str, dict[str, str]] = {
             "<a href=\"https://github.com/settings/personal-access-tokens\">"
             "github.com/settings/personal-access-tokens</a>."
         ),
+        "setup.github.warning.title": "GitHub repositories were skipped",
+        "setup.github.warning.body": (
+            "{message}\n\n"
+            "Your CV analysis can continue, but GitHub projects were not "
+            "included. Add GITHUB_TOKEN to .env or wait for the anonymous "
+            "rate limit to reset, then run the analysis again."
+        ),
         "setup.try_sample": "Try sample data",
         "setup.run": "Run analysis",
         "setup.status.fetching": "Fetching {url}...",
@@ -194,6 +201,7 @@ _STRINGS: dict[str, dict[str, str]] = {
         "match.evidence_header": "EVIDENCE PREVIEW",
         "match.back": "Back to setup",
         "match.generate": "Generate documents",
+        "match.generate.busy": "Generating documents...",
         # ---- documents page ----
         "docs.hint": "Review and tweak each document. Exporters use the text exactly as shown.",
         "docs.tab.resume": "Tailored Resume",
@@ -271,6 +279,31 @@ _STRINGS: dict[str, dict[str, str]] = {
             "Removed project '{title}' because it isn't backed by your "
             "CV, LinkedIn or GitHub data - the AI shouldn't add unverified "
             "projects."
+        ),
+        "docs.refine.confirm.title": "Refine resume with AI?",
+        "docs.refine.confirm.body": (
+            "This calls the AI again on the current resume.\n\n"
+            "Estimated cost: <b>{cost}</b> (based on the last similar refine "
+            "on model <code>{model}</code>; actual price may vary).\n\n"
+            "Continue?"
+        ),
+        "docs.refine.confirm.body_unknown_cost": (
+            "This calls the AI again on the current resume.\n\n"
+            "Estimated cost is unknown for model <code>{model}</code>.\n\n"
+            "Continue?"
+        ),
+        "docs.refine.confirm.dont_ask": "Don't ask again this session",
+        "docs.refine.confirm.cost_about": "~${cost:.2f}",
+        # ---- session AI counter (status bar) ----
+        "ai.session.label": "AI",
+        "ai.session.summary": (
+            "{calls} calls - {tokens} tokens - ~${cost:.2f} this session"
+        ),
+        "ai.session.tokens.short": "{value:.1f}k",
+        "ai.session.tooltip": (
+            "AI usage since the app started. Resets when you restart "
+            "ApplyPilot. Numbers are estimated from the model price table; "
+            "your provider invoice is the source of truth."
         ),
         # ---- history page ----
         "history.loaded_from": "Loaded from <code>{path}</code>",
@@ -563,6 +596,13 @@ _STRINGS: dict[str, dict[str, str]] = {
             "<a href=\"https://github.com/settings/personal-access-tokens\">"
             "github.com/settings/personal-access-tokens</a>."
         ),
+        "setup.github.warning.title": "GitHub repozitáře se přeskočily",
+        "setup.github.warning.body": (
+            "{message}\n\n"
+            "Analýza CV může pokračovat, ale GitHub projekty v ní nebudou. "
+            "Přidej GITHUB_TOKEN do .env nebo počkej na obnovení anonymního "
+            "limitu a spusť analýzu znovu."
+        ),
         "setup.try_sample": "Vyzkoušet ukázková data",
         "setup.run": "Spustit analýzu",
         "setup.status.fetching": "Stahuji {url}...",
@@ -625,6 +665,7 @@ _STRINGS: dict[str, dict[str, str]] = {
         "match.evidence_header": "NÁHLED DŮKAZŮ",
         "match.back": "Zpět na nastavení",
         "match.generate": "Vygenerovat dokumenty",
+        "match.generate.busy": "Generuji dokumenty...",
         "docs.hint": "Zkontroluj a uprav každý dokument. Export vezme text přesně tak, jak ho vidíš.",
         "docs.tab.resume": "Životopis na míru",
         "docs.tab.modern_resume": "Moderní životopis",
@@ -698,6 +739,30 @@ _STRINGS: dict[str, dict[str, str]] = {
         "docs.refine.invented_project_dropped": (
             "Odstraněn projekt '{title}' - nemá oporu v tvém CV, LinkedInu "
             "ani GitHubu, AI nesmí přidávat neověřené projekty."
+        ),
+        "docs.refine.confirm.title": "Upřesnit životopis pomocí AI?",
+        "docs.refine.confirm.body": (
+            "Tohle znovu zavolá AI na aktuální životopis.\n\n"
+            "Odhadovaná cena: <b>{cost}</b> (podle posledního podobného "
+            "upřesnění na modelu <code>{model}</code>; skutečná cena se "
+            "může lišit).\n\nPokračovat?"
+        ),
+        "docs.refine.confirm.body_unknown_cost": (
+            "Tohle znovu zavolá AI na aktuální životopis.\n\n"
+            "Odhad ceny pro model <code>{model}</code> není známý.\n\n"
+            "Pokračovat?"
+        ),
+        "docs.refine.confirm.dont_ask": "Tuhle relaci se už neptat",
+        "docs.refine.confirm.cost_about": "~${cost:.2f}",
+        "ai.session.label": "AI",
+        "ai.session.summary": (
+            "{calls} volání - {tokens} tokenů - ~${cost:.2f} v této relaci"
+        ),
+        "ai.session.tokens.short": "{value:.1f}k",
+        "ai.session.tooltip": (
+            "Využití AI od spuštění aplikace. Resetuje se při restartu. "
+            "Čísla vychází z tabulky cen modelů, faktura od poskytovatele "
+            "je závazná."
         ),
         "history.loaded_from": "Načteno z <code>{path}</code>",
         "history.col.date": "Datum",

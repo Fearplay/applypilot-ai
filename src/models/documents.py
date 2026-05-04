@@ -53,6 +53,14 @@ class TailoredResume(BaseModel):
     experience: list[ResumeSection] = Field(default_factory=list)
     education: list[ResumeSection] = Field(default_factory=list)
     certifications: list[str] = Field(default_factory=list)
+    #: Spoken language entries the resume should display, formatted as
+    #: ``"Language (CEFR)"`` (e.g. ``"German (B2)"``) or ``"Language - native"``.
+    #: Populated from ``CandidateProfile.spoken_languages`` at initial
+    #: generation; refine can update individual entries (e.g. user typed
+    #: "změň němčinu na B2") so the change survives the next render.
+    #: When empty the export falls back to the candidate profile so old
+    #: stored analyses still display the user's languages.
+    spoken_languages: list[str] = Field(default_factory=list)
 
     role_targeted_for: str = Field(
         default="",

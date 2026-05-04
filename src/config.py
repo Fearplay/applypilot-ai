@@ -87,6 +87,11 @@ class Settings:
     ai_temperature: float
     ai_request_log: bool
     ai_debug_prompts: bool
+    #: When True, the GUI shows a "Refine costs ~$X - continue?" modal
+    #: before every refine_resume call. Defaults to True so a stray double
+    #: click never silently doubles the spend; the modal has a
+    #: "Don't ask again this session" check the user can untick.
+    ai_confirm_refine: bool
 
     ui_language: str
 
@@ -138,10 +143,16 @@ def load_settings(env_file: str | os.PathLike[str] | None = None) -> Settings:
         ai_base_url=os.getenv("AI_BASE_URL", "https://api.openai.com/v1").rstrip("/"),
         ai_api_key=os.getenv("AI_API_KEY", "").strip(),
         ai_model=os.getenv("AI_MODEL", "gpt-4o-mini").strip(),
-        ai_timeout=_int_env("AI_TIMEOUT", 60),
+        # 180 s default (was 60 s) so analyze_candidate against a long CV
+        # doesn't time out mid-stream and force a billable retry. The
+        # provider already short-circuits the json_schema -> json_object
+        # fallback on timeouts, but the original request can still be
+        # racing the wire when we cancel.
+        ai_timeout=_int_env("AI_TIMEOUT", 180),
         ai_temperature=_float_env("AI_TEMPERATURE", 0.2),
         ai_request_log=_bool_env("AI_REQUEST_LOG", True),
         ai_debug_prompts=_bool_env("AI_DEBUG_PROMPTS", False),
+        ai_confirm_refine=_bool_env("AI_CONFIRM_REFINE", True),
         ui_language=_resolve_ui_language(),
         github_token=os.getenv("GITHUB_TOKEN", "").strip(),
     )

@@ -111,6 +111,7 @@ _EXPERIENCE_TRANSLATIONS_EN: dict[str, str] = {
     "tester": "Tester",
     "testerka": "Tester",
     "softwarovy inzenyr": "Software Engineer",
+    "softwarovy vyvojar": "Software Developer",
     "programator": "Programmer",
     "vedouci": "Lead",
     "junior vyvojar": "Junior Developer",
@@ -128,6 +129,7 @@ _EXPERIENCE_TRANSLATIONS_CS: dict[str, str] = {
     "internship": "Stáž",
     "tester": "Tester",
     "software engineer": "Softwarový inženýr",
+    "software developer": "Softwarový vývojář",
     "programmer": "Programátor",
     "junior developer": "Junior vývojář",
     "senior developer": "Senior vývojář",
@@ -399,11 +401,17 @@ def _fixup_education_language(resume: TailoredResume, output_language: str) -> N
                 section.subtitle = _translate_edu_text(section.subtitle, edu_table)
             section.period = _translate_period(section.period, "cs")
         for section in resume.experience:
-            if section.title and _looks_english(section.title):
+            if section.title and (
+                _looks_english(section.title)
+                or _contains_translation_keys(section.title, _EXPERIENCE_TRANSLATIONS_CS)
+            ):
                 section.title = _translate_text_diacritics_insensitive(
                     section.title, _EXPERIENCE_TRANSLATIONS_CS
                 )
-            if section.subtitle and _looks_english(section.subtitle):
+            if section.subtitle and (
+                _looks_english(section.subtitle)
+                or _contains_translation_keys(section.subtitle, _EXPERIENCE_TRANSLATIONS_CS)
+            ):
                 section.subtitle = _translate_text_diacritics_insensitive(
                     section.subtitle, _EXPERIENCE_TRANSLATIONS_CS
                 )
@@ -991,6 +999,46 @@ def _dedup_cross_language_bullets(
                 continue
             keep[i] = False
 
+    # Pass 3: rescue-translate. If pass 2 found no rich OUTPUT_LANGUAGE
+    # bullet to dedupe against AND the majority of surviving bullets are
+    # still in the OTHER language (e.g. AI generated an entire CZ
+    # section's experience entry with English bullets), TRANSLATE the
+    # other-language bullets in-place using the EN<->CZ mapping table
+    # instead of dropping them. This preserves the content the user wrote
+    # in their CV - the bug report screenshot showed a Czech resume with
+    # English bullets where the safety net dropped them entirely and
+    # left the section bullet-less, which was even worse than mixed
+    # language. Only runs for cs <-> en today; no-op for any other
+    # output_language.
+    if not has_rich_output_lang and code == "cs":
+        other_count = sum(
+            1
+            for i, lang in enumerate(languages)
+            if keep[i] and lang == other_lang
+        )
+        kept_total = sum(1 for k in keep if k)
+        if kept_total > 0 and other_count / kept_total > 0.5:
+            translated = 0
+            for i, bullet in enumerate(section.bullets):
+                if not keep[i] or languages[i] != other_lang:
+                    continue
+                rewritten = _translate_text_diacritics_insensitive(
+                    bullet.text, _EXPERIENCE_TRANSLATIONS_CS
+                )
+                if rewritten != bullet.text:
+                    bullet.text = rewritten
+                    translated += 1
+            if translated:
+                logger.info(
+                    "_dedup_cross_language_bullets: pass 3 translated %d "
+                    "%s bullet(s) into %s in section %r instead of "
+                    "dropping them.",
+                    translated,
+                    other_lang,
+                    code,
+                    section.title or section.subtitle or "?",
+                )
+
     survivors = [b for b, k in zip(section.bullets, keep) if k]
     if len(survivors) != len(section.bullets):
         logger.info(
@@ -1436,9 +1484,23 @@ def generate_tailored_resume(
     _dedup_resume_sections(resume, output_language)
     _enforce_bullet_floor(resume, candidate)
     ensure_experience_section(resume, candidate, output_language)
+    # Safety-net rows are copied from the structured candidate profile, which
+    # may still be in the source language. Run the output cleanup again so
+    # injected rows get translated and collapsed with any AI-emitted twin.
+    _fixup_education_language(resume, output_language)
+    _dedup_resume_sections(resume, output_language)
     _strip_invented_projects(resume, candidate)
     _strip_incomplete_education(resume)
     _backfill_periods(resume, candidate)
+    _fixup_education_language(resume, output_language)
+    _dedup_resume_sections(resume, output_language)
+    # Mirror the candidate's languages onto the resume on the first
+    # render so subsequent refines have a place to apply edits like
+    # "změň němčinu na B2" without losing the rest of the list. Only
+    # populate when the AI didn't already supply a list - the AI's
+    # version may include localised wording the user prefers.
+    if not resume.spoken_languages and candidate.spoken_languages:
+        resume.spoken_languages = list(candidate.spoken_languages)
     return ensure_projects_section(resume, candidate)
 
 
@@ -1527,6 +1589,183 @@ def _intentionally_dropped_experience(
     return dropped
 
 
+_REFINE_DELETE_MATCH_STOPWORDS: frozenset[str] = frozenset(
+    _strip_diacritics(word)
+    for word in (
+        "please", "pls", "prosím", "prosim", "thanks", "děkuji", "diky",
+        "smaž", "smaz", "smazat", "odstraň", "odstran", "odstranit",
+        "delete", "remove", "drop", "odeber", "odebrat", "vymaž", "vymaz",
+        "pozice", "pozici", "role", "řádek", "radek", "záznam", "zaznam",
+        "věc", "vec", "věci", "veci", "thing", "things", "entry", "item",
+        "resume", "životopis", "zivotopis", "from", "with", "and", "the",
+        "ten", "ta", "to", "ty", "tuhle", "tento", "tahle",
+    )
+)
+
+
+def _feedback_delete_chunks(feedback: str) -> list[str]:
+    """Return feedback chunks that carry an explicit delete instruction.
+
+    The GUI normally sends one numbered request per line. If only one free-form
+    sentence was provided, a single delete keyword applies to that whole chunk.
+    For mixed numbered feedback ("1) delete X\n2) add Y") we only treat the
+    lines with their own delete keyword as deletion requests.
+    """
+    raw_lines = [line.strip() for line in (feedback or "").splitlines()]
+    chunks: list[str] = []
+    for line in raw_lines:
+        if not line:
+            continue
+        cleaned = re.sub(r"^\s*(?:[-*]\s*)?\d+[\).:-]\s*", "", line).strip()
+        if cleaned:
+            chunks.append(cleaned)
+    if not chunks and feedback.strip():
+        chunks = [feedback.strip()]
+    if len(chunks) == 1:
+        return chunks if _feedback_has_delete_intent(chunks[0]) else []
+    return [chunk for chunk in chunks if _feedback_has_delete_intent(chunk)]
+
+
+def _match_phrase(text: str) -> str:
+    cleaned = _strip_diacritics(text or "").lower()
+    cleaned = re.sub(r"[^a-z0-9]+", " ", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _match_tokens(text: str) -> set[str]:
+    return {
+        tok
+        for tok in re.findall(r"[a-z0-9]{3,}", _match_phrase(text))
+        if tok not in _REFINE_DELETE_MATCH_STOPWORDS
+    }
+
+
+def _feedback_matches_section(chunk: str, section: ResumeSection) -> bool:
+    """Conservative fuzzy match between a delete request and one resume row."""
+    chunk_norm = _match_phrase(chunk)
+    title_norm = _match_phrase(section.title)
+    subtitle_norm = _match_phrase(section.subtitle)
+    if title_norm and len(title_norm) >= 4 and title_norm in chunk_norm:
+        return True
+    if subtitle_norm and len(subtitle_norm) >= 4 and subtitle_norm in chunk_norm:
+        return True
+
+    query_tokens = _match_tokens(chunk)
+    if not query_tokens:
+        return False
+    title_tokens = _match_tokens(section.title)
+    subtitle_tokens = _match_tokens(section.subtitle)
+    section_tokens = _match_tokens(
+        " ".join([section.title or "", section.subtitle or "", section.period or ""])
+    )
+    if title_tokens and title_tokens <= query_tokens:
+        return True
+    if subtitle_tokens and subtitle_tokens <= query_tokens:
+        return True
+    overlap = query_tokens & section_tokens
+    if len(overlap) >= 2:
+        return True
+    return any(len(tok) >= 6 for tok in overlap)
+
+
+def _feedback_matches_text(chunk: str, text: str) -> bool:
+    chunk_norm = _match_phrase(chunk)
+    text_norm = _match_phrase(text)
+    if text_norm and len(text_norm) >= 4 and text_norm in chunk_norm:
+        return True
+    query_tokens = _match_tokens(chunk)
+    text_tokens = _match_tokens(text)
+    if text_tokens and text_tokens <= query_tokens:
+        return True
+    overlap = query_tokens & text_tokens
+    if len(overlap) >= 2:
+        return True
+    return any(len(tok) >= 6 for tok in overlap)
+
+
+def _apply_explicit_feedback_deletions(
+    resume: TailoredResume,
+    feedback: str,
+) -> tuple[set[tuple[str, str, tuple[int, int] | None]], bool, list[str]]:
+    """Apply named delete requests that the AI failed to perform.
+
+    Returns ``(experience_keys, deleted_all_projects, labels)``. The keys feed
+    the experience safety net so rows removed here are not re-injected from the
+    candidate profile in the same refine pass.
+    """
+    chunks = _feedback_delete_chunks(feedback)
+    if not chunks:
+        return set(), False, []
+
+    deleted_exp_keys: set[tuple[str, str, tuple[int, int] | None]] = set()
+    deleted_labels: list[str] = []
+
+    def _filter_sections(
+        sections: list[ResumeSection],
+        *,
+        collect_exp_keys: bool = False,
+    ) -> list[ResumeSection]:
+        survivors: list[ResumeSection] = []
+        for section in sections:
+            if any(_feedback_matches_section(chunk, section) for chunk in chunks):
+                if collect_exp_keys:
+                    deleted_exp_keys.add(_experience_dedup_key(section))
+                deleted_labels.append(_format_safety_net_addition(section))
+                continue
+            survivors.append(section)
+        return survivors
+
+    before_projects = len(resume.projects)
+    resume.experience = _filter_sections(resume.experience, collect_exp_keys=True)
+    resume.education = _filter_sections(resume.education)
+    resume.projects = _filter_sections(resume.projects)
+    deleted_all_projects = before_projects > 0 and not resume.projects
+
+    if resume.certifications:
+        certs: list[str] = []
+        for cert in resume.certifications:
+            if any(_feedback_matches_text(chunk, cert) for chunk in chunks):
+                deleted_labels.append(cert)
+                continue
+            certs.append(cert)
+        resume.certifications = certs
+
+    if deleted_labels:
+        logger.info(
+            "refine explicit deletion: removed %d resume item(s): %s",
+            len(deleted_labels),
+            deleted_labels,
+        )
+    return deleted_exp_keys, deleted_all_projects, deleted_labels
+
+
+def _feedback_targets_project_deletion(
+    current_resume: TailoredResume,
+    feedback: str,
+) -> bool:
+    """Return True when feedback names a current project for deletion.
+
+    Used when the AI already removed the project before our deterministic pass
+    runs. In that case ``resume.projects`` may be empty, so we need to inspect
+    the previous draft to avoid re-adding a fallback project immediately after
+    the user asked to delete it.
+    """
+    chunks = _feedback_delete_chunks(feedback)
+    if not chunks or not current_resume.projects:
+        return False
+    for chunk in chunks:
+        chunk_norm = _match_phrase(chunk)
+        asks_for_all_projects = (
+            any(word in chunk_norm for word in ("project", "projects", "projekt", "projekty"))
+            and any(word in chunk_norm for word in ("all", "every", "vsechny", "vsechno"))
+        )
+        if asks_for_all_projects:
+            return True
+        if any(_feedback_matches_section(chunk, project) for project in current_resume.projects):
+            return True
+    return False
+
+
 def _format_safety_net_addition(section: ResumeSection) -> str:
     """Render a single re-injected row for the user-facing explanation."""
     label = section.title or "(untitled role)"
@@ -1539,17 +1778,27 @@ def _format_safety_net_addition(section: ResumeSection) -> str:
 
 
 def _candidate_has_linkedin(candidate: CandidateProfile) -> bool:
-    """Return True when the user supplied any LinkedIn signal at all.
+    """Return True when the user supplied a LinkedIn EXPORT (not just a URL).
 
-    Treats ``raw_linkedin_text`` and any entry tagged ``source='linkedin'``
-    or ``'both'`` as evidence the user provided a LinkedIn export. When
-    none of these are present we know the AI must not reference LinkedIn
-    in the explanation - the user never gave us anything to compare
-    against.
+    The previous version treated ``candidate.linkedin_url`` as proof of
+    LinkedIn data, but the URL is routinely extracted from the candidate's
+    CV footer by ``analyze_candidate`` even when the user never uploaded
+    a LinkedIn export. With the URL alone we have no actual LinkedIn
+    content to compare against, so the AI used to be told it could
+    reference LinkedIn data and would then hallucinate ("LinkedIn doesn't
+    show experience X"). The bug report screenshot caught this in the
+    wild on a Czech resume that had only a CV uploaded.
+
+    A LinkedIn signal now requires either:
+
+    * ``raw_linkedin_text`` non-empty (the actual export blob), OR
+    * at least one experience / education entry whose ``source`` is
+      ``linkedin`` or ``both`` (set by the LinkedIn parser, never by
+      the CV parser).
+
+    A bare ``linkedin_url`` no longer counts.
     """
     if (candidate.raw_linkedin_text or "").strip():
-        return True
-    if (candidate.linkedin_url or "").strip():
         return True
     for entry in (*candidate.experience, *candidate.education):
         if entry.source in ("linkedin", "both"):
@@ -1583,6 +1832,214 @@ def _strip_linkedin_mentions(text: str) -> str:
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned.strip()
+
+
+# ---------------------------------------------------------------------------
+# Deterministic language-level edits in refine
+# ---------------------------------------------------------------------------
+
+# Map every "name surface form" we want to recognise in user feedback to a
+# canonical English language name. Keys are matched after diacritic stripping
+# + lowercasing, so "Němčina", "nemcina" and "german" all collapse to the
+# same canonical entry. Values are the canonical English name we use to
+# look up the existing entry in ``resume.spoken_languages`` (also matched
+# diacritics-insensitive against the entry's surface form).
+_LANGUAGE_NAME_ALIASES: dict[str, str] = {
+    # German
+    "german": "German",
+    "germana": "German",
+    "germanstina": "German",
+    "deutsch": "German",
+    "nemcina": "German",
+    "nemcinu": "German",
+    "nemciny": "German",
+    "nemcine": "German",
+    "nemecky": "German",
+    "nemecka": "German",
+    # English
+    "english": "English",
+    "anglictina": "English",
+    "anglictinu": "English",
+    "anglictiny": "English",
+    "anglictine": "English",
+    "anglicky": "English",
+    "anglicka": "English",
+    # Czech
+    "czech": "Czech",
+    "cestina": "Czech",
+    "cestinu": "Czech",
+    "cestiny": "Czech",
+    "cestine": "Czech",
+    "cesky": "Czech",
+    "ceska": "Czech",
+    # Slovak
+    "slovak": "Slovak",
+    "slovenstina": "Slovak",
+    "slovenstinu": "Slovak",
+    "slovenstiny": "Slovak",
+    "slovenstine": "Slovak",
+    "slovensky": "Slovak",
+    "slovenska": "Slovak",
+    # Spanish
+    "spanish": "Spanish",
+    "spanelstina": "Spanish",
+    "spanelstinu": "Spanish",
+    "spanelstiny": "Spanish",
+    "spanelstine": "Spanish",
+    "spanelsky": "Spanish",
+    # French
+    "french": "French",
+    "francouzstina": "French",
+    "francouzstinu": "French",
+    "francouzstiny": "French",
+    "francouzstine": "French",
+    "francouzsky": "French",
+    # Italian
+    "italian": "Italian",
+    "italstina": "Italian",
+    "italstinu": "Italian",
+    "italstiny": "Italian",
+    "italstine": "Italian",
+    "italsky": "Italian",
+    # Polish
+    "polish": "Polish",
+    "polstina": "Polish",
+    "polstinu": "Polish",
+    "polstiny": "Polish",
+    "polstine": "Polish",
+    "polsky": "Polish",
+    # Russian
+    "russian": "Russian",
+    "rustina": "Russian",
+    "rustinu": "Russian",
+    "rustiny": "Russian",
+    "rustine": "Russian",
+    "rusky": "Russian",
+    # Ukrainian
+    "ukrainian": "Ukrainian",
+    "ukrajinstina": "Ukrainian",
+    "ukrajinstinu": "Ukrainian",
+    "ukrajinstiny": "Ukrainian",
+    "ukrajinstine": "Ukrainian",
+    "ukrajinsky": "Ukrainian",
+}
+
+# Pattern that matches "<language> <connector?> <CEFR>" in user feedback.
+# Examples it must catch (Czech and English both important):
+#   "změň němčinu na B2"  -> ("nemcinu", "B2")
+#   "set german to B2"     -> ("german", "B2")
+#   "german B2"            -> ("german", "B2")
+#   "němčinu -> B2"        -> ("nemcinu", "B2")
+# The CEFR token is anchored to A1/A2/B1/B2/C1/C2 only; the connector is
+# optional (na / to / -> / =) so loose phrasing still works.
+_LANGUAGE_LEVEL_RE = re.compile(
+    r"\b([A-Za-z\u0080-\uFFFF]{4,})\s*"
+    r"(?:na|to|=|->|na\s+\u00farove\u0148|\u2192)?\s*"
+    r"([ABC][12])\b",
+    re.IGNORECASE,
+)
+
+
+def _canonical_language_name(token: str) -> str | None:
+    """Return the canonical English name for a feedback token, or ``None``."""
+    if not token:
+        return None
+    key = _strip_diacritics(token).lower().strip()
+    return _LANGUAGE_NAME_ALIASES.get(key)
+
+
+def _format_language_entry(name: str, level: str, output_language: str) -> str:
+    """Build the ``"Language (Level)"`` string we store in ``spoken_languages``.
+
+    When the resume is in Czech we localise the language NAME (so
+    "German (B2)" becomes "Němčina (B2)") so the new entry blends with
+    the rest of the list. The level itself stays as the CEFR code
+    because that's universally recognised.
+    """
+    code = (output_language or "en").strip().lower()
+    cs_names = {
+        "German": "Němčina",
+        "English": "Angličtina",
+        "Czech": "Čeština",
+        "Slovak": "Slovenština",
+        "Spanish": "Španělština",
+        "French": "Francouzština",
+        "Italian": "Italština",
+        "Polish": "Polština",
+        "Russian": "Ruština",
+        "Ukrainian": "Ukrajinština",
+    }
+    display = cs_names.get(name, name) if code == "cs" else name
+    return f"{display} ({level.upper()})"
+
+
+def _entry_matches_language(entry: str, canonical: str) -> bool:
+    """Diacritics-insensitive name match for an existing list entry."""
+    if not entry:
+        return False
+    head = entry.split("(")[0].split(" - ")[0].split(" – ")[0].strip()
+    head_norm = _strip_diacritics(head).lower()
+    target_norm = _strip_diacritics(canonical).lower()
+    if head_norm == target_norm:
+        return True
+    # Czech inflected forms ("Němčina" / "Němčinu" / "Němčiny") all map
+    # to the same canonical via the alias table; check that path too.
+    return _canonical_language_name(head) == canonical
+
+
+def _apply_explicit_language_level_changes(
+    resume: TailoredResume,
+    feedback: str,
+    output_language: str,
+) -> list[tuple[str, str]]:
+    """Update ``resume.spoken_languages`` based on explicit user feedback.
+
+    The bug report screenshot caught the AI saying ``"changed German to
+    B2"`` in the explanation while leaving the resume's languages list
+    untouched. This deterministic pass parses ``feedback`` for
+    ``"<language> ... <CEFR>"`` patterns and rewrites the matching
+    entry in place (or appends a new one if the language wasn't present
+    yet). Returns the list of ``(language, new_level)`` tuples it
+    applied so the caller can include them in the explanation if it
+    wants - empty list means nothing matched.
+
+    Conservative: only writes when the language alias is recognised
+    AND the CEFR code is one of A1/A2/B1/B2/C1/C2. Anything else falls
+    through and the AI's own response wins.
+    """
+    if not feedback or not resume:
+        return []
+    applied: list[tuple[str, str]] = []
+    seen_pairs: set[tuple[str, str]] = set()
+    for match in _LANGUAGE_LEVEL_RE.finditer(feedback):
+        token = match.group(1)
+        level = match.group(2).upper()
+        canonical = _canonical_language_name(token)
+        if not canonical or level not in {"A1", "A2", "B1", "B2", "C1", "C2"}:
+            continue
+        pair = (canonical, level)
+        if pair in seen_pairs:
+            continue
+        seen_pairs.add(pair)
+        new_entry = _format_language_entry(canonical, level, output_language)
+        replaced = False
+        for idx, existing in enumerate(resume.spoken_languages):
+            if _entry_matches_language(existing, canonical):
+                if existing.strip() != new_entry:
+                    resume.spoken_languages[idx] = new_entry
+                replaced = True
+                break
+        if not replaced:
+            resume.spoken_languages.append(new_entry)
+        applied.append(pair)
+    if applied:
+        logger.info(
+            "_apply_explicit_language_level_changes: rewrote %d "
+            "language(s) on the resume from refine feedback: %s",
+            len(applied),
+            ", ".join(f"{n}={lvl}" for n, lvl in applied),
+        )
+    return applied
 
 
 def refine_tailored_resume(
@@ -1623,29 +2080,51 @@ def refine_tailored_resume(
     _dedup_resume_sections(resume, output_language)
     _enforce_bullet_floor(resume, candidate)
 
-    # When the user explicitly asks to delete a position ('smaž', 'remove',
-    # 'odeber', ...), we MUST stop the experience safety net from
-    # silently re-injecting rows the AI just dropped on the user's
-    # behalf. ``skip_keys`` carries the canonical keys of rows the AI
-    # removed in this refine pass so :func:`_compute_missing_experience`
-    # leaves them alone. Without this guard, "Refine with AI: smaž
-    # pozici X" produced a resume identical to the previous draft.
-    skip_keys: set[tuple[str, str, tuple[int, int] | None]] = set()
-    if _feedback_has_delete_intent(feedback):
-        skip_keys = _intentionally_dropped_experience(current_resume, resume)
+    # Languages on the resume model are the source of truth from now on
+    # (see TailoredResume.spoken_languages docstring). Carry them over
+    # from the previous draft when the AI omitted them, and seed from
+    # the candidate when even that list is empty - otherwise the user's
+    # earlier "změň němčinu na B2" edit would silently disappear.
+    if not resume.spoken_languages:
+        if current_resume.spoken_languages:
+            resume.spoken_languages = list(current_resume.spoken_languages)
+        elif candidate.spoken_languages:
+            resume.spoken_languages = list(candidate.spoken_languages)
 
-    # Capture missing experience rows BEFORE we inject them so we can tell
-    # the user (in their language) which rows the safety net rescued.
-    missing_before = _compute_missing_experience(resume, candidate, skip_keys=skip_keys)
-    ensure_experience_section(resume, candidate, output_language, skip_keys=skip_keys)
+    # Detect explicit delete intent so the project-stripper below knows
+    # whether "no projects left" is the user's wish (skip the projects
+    # safety net) or just an AI drop (re-inject GitHub data).
+    if _feedback_has_delete_intent(feedback):
+        project_delete_requested = _feedback_targets_project_deletion(
+            current_resume, feedback
+        )
+        _, deleted_all_projects, _ = _apply_explicit_feedback_deletions(
+            resume, feedback
+        )
+        deleted_all_projects = deleted_all_projects or (
+            project_delete_requested and not resume.projects
+        )
+    else:
+        deleted_all_projects = False
+
+    # User said "no security should be there at all" for experience rows
+    # in particular: ``ensure_experience_section`` used to silently re-
+    # add positions the user (or the AI on the user's instruction) just
+    # deleted, undoing their choice on every refine pass. The initial
+    # ``generate_tailored_resume`` still uses the safety net to protect
+    # the very first draft, but refine has to honour the user's edits.
+    # Other safety nets (invented-project stripper, education cleanup,
+    # period backfill) stay - the user explicitly asked us to keep
+    # those.
+    _apply_explicit_language_level_changes(resume, feedback, output_language)
     dropped_projects = _strip_invented_projects(resume, candidate)
     _strip_incomplete_education(resume)
     _backfill_periods(resume, candidate)
-    ensure_projects_section(resume, candidate)
+    _fixup_education_language(resume, output_language)
+    _dedup_resume_sections(resume, output_language)
+    if not deleted_all_projects:
+        ensure_projects_section(resume, candidate)
 
-    # Build the inline explanation. The AI's own note always comes first,
-    # then we append a one-liner per safety-net intervention so the user
-    # sees both AI- and rule-based modifications in one place.
     explanation_parts: list[str] = []
     ai_explanation = (refined.explanation or "").strip()
     # When the user did NOT supply LinkedIn, strip any sentence that
@@ -1656,32 +2135,6 @@ def refine_tailored_resume(
     if ai_explanation:
         explanation_parts.append(ai_explanation)
 
-    # Always announce safety-net additions so the user is never surprised
-    # by a row they didn't see in the previous draft. The "add intent"
-    # check is informational (used to make the message louder when the
-    # user explicitly asked) but the announcement itself is unconditional.
-    if missing_before:
-        labels = ", ".join(
-            _format_safety_net_addition(s) for s in missing_before
-        )
-        # Always use the resume's ``output_language`` (not the global UI
-        # locale) so a Czech resume gets a Czech safety-net note even
-        # when the user is browsing the chrome in English.
-        if _feedback_has_add_intent(feedback):
-            line = t_in(
-                output_language, "docs.refine.safety_added.explicit",
-                labels=labels,
-            )
-        else:
-            line = t_in(
-                output_language, "docs.refine.safety_added.auto",
-                labels=labels,
-            )
-        explanation_parts.append(line)
-
-    # Tell the user which fabricated projects we removed - one line per
-    # dropped title so they can either supply a link / description or
-    # confirm the AI was making things up.
     for title in dropped_projects:
         explanation_parts.append(
             t_in(

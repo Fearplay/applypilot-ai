@@ -43,6 +43,7 @@ from src.services.resume_generator import (
     _strip_linkedin_mentions,
     _translate_period,
     ensure_projects_section,
+    generate_tailored_resume,
     refine_tailored_resume,
 )
 
@@ -208,6 +209,15 @@ class _StubProvider(BaseAIProvider):
         raise NotImplementedError
 
 
+class _GenerateStubProvider(_StubProvider):
+    def __init__(self, resume: TailoredResume) -> None:
+        super().__init__(RefinedResume(resume=resume, explanation=""))
+        self._resume = resume
+
+    def generate_resume(self, job, candidate, answers, evidence=(), output_language="en"):
+        return self._resume
+
+
 def _make_job() -> JobPosting:
     return JobPosting(title="QA Engineer", company="Acme")
 
@@ -277,15 +287,19 @@ def test_refine_tailored_resume_returns_refined_resume_with_resume_field():
     assert "AI wrote this." in out.explanation
 
 
-def test_refine_safety_net_reinjects_missing_avast_role_on_explicit_feedback():
-    """When the user says 'chybí pozice X' and the AI returns a resume
-    that still doesn't contain X, the Python safety net re-injects the
-    missing row from the candidate profile and tells the user about it
-    in the explanation.
+def test_refine_does_not_reinject_experience_user_or_ai_dropped():
+    """User explicitly asked us to remove the experience safety net from
+    refine. Even when feedback says "chybi" / "missing", the refine path
+    must NOT re-add rows from the candidate profile - the user / AI is
+    the final arbiter of what stays in the resume.
+
+    This is the inverted version of the old "safety net re-injects" test.
+    Initial generation still uses ``ensure_experience_section`` to protect
+    the very first draft (covered by other tests); only refine is now
+    hands-off.
     """
     candidate = _make_candidate_with_two_qa_roles()
     starting = _make_resume_missing_junior()
-    # AI returns the same incomplete resume - the safety net must save us.
     ai_returned = TailoredResume.model_validate(starting.model_dump())
     ai_returned.professional_summary = "Updated by AI."
     refined_from_ai = RefinedResume(
@@ -302,25 +316,26 @@ def test_refine_safety_net_reinjects_missing_avast_role_on_explicit_feedback():
     )
 
     titles = [s.title for s in out.resume.experience]
-    assert "Junior Software QA Engineer" in titles
-    # Both the AI's original explanation AND the safety-net line must
-    # appear so the user sees the full picture.
+    assert "Junior Software QA Engineer" not in titles
+    # AI's note still surfaces; we just stopped APPENDING the safety-net
+    # block that used to re-add the dropped row.
     assert "Aktualizoval jsem profesní shrnutí." in out.explanation
-    assert "Junior Software QA Engineer" in out.explanation
-    assert "Avast Software" in out.explanation
+    # No "Bezpečnostní vrstva" / "Safety net" line either.
+    assert "Bezpečnostní vrstva" not in out.explanation
+    assert "Safety net" not in out.explanation
 
 
-def test_refine_safety_net_announces_silent_additions_too():
-    """Even when the user did NOT ask for the row explicitly, the
-    safety net still re-injects missing experience and announces it
-    (the user must never be surprised by silent additions)."""
+def test_refine_does_not_announce_safety_net_additions_anymore():
+    """Counter-test of the previous behaviour: stylistic-only feedback
+    must NOT trigger any "we re-added X" line. The user opted in to the
+    minimal-safety-net mode where refine fully honours the AI's drops.
+    """
     candidate = _make_candidate_with_two_qa_roles()
     starting = _make_resume_missing_junior()
     ai_returned = TailoredResume.model_validate(starting.model_dump())
     refined_from_ai = RefinedResume(resume=ai_returned, explanation="Drobné úpravy.")
     provider = _StubProvider(refined_from_ai)
 
-    # Feedback that doesn't mention the missing row - just stylistic.
     out = refine_tailored_resume(
         provider, starting, "Make the summary punchier please.",
         _make_job(), candidate,
@@ -328,10 +343,9 @@ def test_refine_safety_net_announces_silent_additions_too():
     )
 
     titles = [s.title for s in out.resume.experience]
-    assert "Junior Software QA Engineer" in titles
-    # English locale -> English message.
-    assert "Junior Software QA Engineer" in out.explanation
-    assert "Avast Software" in out.explanation
+    assert "Junior Software QA Engineer" not in titles
+    assert "Safety net" not in out.explanation
+    assert "re-added" not in out.explanation.lower()
 
 
 def test_refine_no_safety_net_when_resume_already_complete():
@@ -374,24 +388,25 @@ def test_refine_no_safety_net_when_resume_already_complete():
     assert out.explanation == "No structural changes."
 
 
-def test_refine_uses_czech_safety_net_message_when_output_language_cs():
-    """Locale-aware messages: a Czech resume gets the Czech safety-net
-    line, not the English one."""
+def test_refine_no_safety_net_message_in_either_locale():
+    """Inverted version of the old locale test: the safety-net line is
+    no longer emitted at all because the experience re-injection itself
+    was removed for refine. Both Czech and English locales now receive
+    the AI's explanation untouched.
+    """
     candidate = _make_candidate_with_two_qa_roles()
     starting = _make_resume_missing_junior()
     ai_returned = TailoredResume.model_validate(starting.model_dump())
     refined_from_ai = RefinedResume(resume=ai_returned, explanation="")
     provider = _StubProvider(refined_from_ai)
 
-    # Feedback uses Czech "chybi" keyword to make the explicit-add path fire.
     out = refine_tailored_resume(
         provider, starting, "chybi mi tam Junior Avast",
         _make_job(), candidate,
         output_language="cs",
     )
 
-    # Czech wording is selected; the English version must NOT appear.
-    assert "Bezpečnostní vrstva" in out.explanation
+    assert "Bezpečnostní vrstva" not in out.explanation
     assert "Safety net" not in out.explanation
 
 
@@ -792,11 +807,12 @@ def test_refine_with_delete_intent_does_not_reinject_dropped_role():
     assert "Junior Developer" not in titles
 
 
-def test_refine_without_delete_intent_keeps_safety_net_active():
-    """Counter-test for the diff guard: a stylistic-only feedback must
-    NOT disarm the safety net, otherwise we'd silently drop rows the AI
-    accidentally lost. Same fixture but the user asks for prose
-    polish, so the OldCorp role must come back."""
+def test_refine_without_delete_intent_does_not_reinject_dropped_rows():
+    """Inverted test: with the experience re-injection removed from
+    refine, even stylistic-only feedback no longer brings back rows the
+    AI dropped. The user explicitly opted in to this minimal-safety-net
+    behaviour.
+    """
     candidate = _candidate_with_two_roles_and_optional_first()
     starting = _resume_with_two_roles()
 
@@ -824,8 +840,139 @@ def test_refine_without_delete_intent_keeps_safety_net_active():
     )
 
     titles = [s.title for s in out.resume.experience]
-    assert "Junior Developer" in titles
+    assert "Junior Developer" not in titles
     assert "Senior Engineer" in titles
+
+
+def test_refine_with_delete_intent_removes_all_named_rows_even_if_ai_misses_one():
+    """The model sometimes deletes only the first requested row from a
+    numbered list. The wrapper must remove every named row deterministically
+    and keep the safety net from re-injecting them."""
+    candidate = CandidateProfile(
+        full_name="Test",
+        experience=[
+            WorkExperience(
+                id="exp-old",
+                title="Junior Developer",
+                company="OldCorp",
+                period="2018 - 2019",
+                bullets=["Wrote my first Python."],
+                source="cv",
+            ),
+            WorkExperience(
+                id="exp-side",
+                title="IT Tester",
+                company="SideCorp",
+                period="2020 - 2021",
+                bullets=["Manual regression testing."],
+                source="cv",
+            ),
+            WorkExperience(
+                id="exp-current",
+                title="Senior Engineer",
+                company="NewCorp",
+                period="2024 - present",
+                bullets=["Lead the platform team."],
+                source="cv",
+            ),
+        ],
+    )
+    starting = TailoredResume(
+        name="Test",
+        professional_summary="Engineer.",
+        technical_skills=["Python"],
+        experience=[
+            ResumeSection(
+                title="Junior Developer",
+                subtitle="OldCorp",
+                period="2018 - 2019",
+                bullets=[ResumeBullet(text="Wrote my first Python.")],
+            ),
+            ResumeSection(
+                title="IT Tester",
+                subtitle="SideCorp",
+                period="2020 - 2021",
+                bullets=[ResumeBullet(text="Manual regression testing.")],
+            ),
+            ResumeSection(
+                title="Senior Engineer",
+                subtitle="NewCorp",
+                period="2024 - present",
+                bullets=[ResumeBullet(text="Lead the platform team.")],
+            ),
+        ],
+        role_targeted_for="Engineer",
+    )
+    # AI only deletes OldCorp and misses SideCorp.
+    ai_refined = TailoredResume(
+        name="Test",
+        professional_summary="Engineer.",
+        technical_skills=["Python"],
+        experience=[
+            ResumeSection(
+                title="IT Tester",
+                subtitle="SideCorp",
+                period="2020 - 2021",
+                bullets=[ResumeBullet(text="Manual regression testing.")],
+            ),
+            ResumeSection(
+                title="Senior Engineer",
+                subtitle="NewCorp",
+                period="2024 - present",
+                bullets=[ResumeBullet(text="Lead the platform team.")],
+            ),
+        ],
+        role_targeted_for="Engineer",
+    )
+    provider = _StubProvider(RefinedResume(resume=ai_refined, explanation="Smazáno."))
+
+    out = refine_tailored_resume(
+        provider, starting,
+        "1) smaž pozici Junior Developer u OldCorp\n"
+        "2) smaž pozici IT Tester u SideCorp",
+        _make_job(), candidate,
+        output_language="cs",
+    )
+
+    labels = [f"{s.title} @ {s.subtitle}" for s in out.resume.experience]
+    assert "Senior Engineer @ NewCorp" in labels
+    assert all("OldCorp" not in label for label in labels)
+    assert all("SideCorp" not in label for label in labels)
+
+
+def test_generate_translates_safety_net_injected_rows_in_czech_resume():
+    """Rows copied back from CandidateProfile after generation must pass
+    through the same language cleanup as AI-emitted rows."""
+    candidate = CandidateProfile(
+        full_name="Test",
+        experience=[
+            WorkExperience(
+                id="exp-creatiweb",
+                title="Developer (Python - Chatbot - Game dev)",
+                company="CreatiWeb",
+                period="2019 - 2020",
+                bullets=["Python game development and IBM Watson chatbot."],
+                source="cv",
+            ),
+        ],
+    )
+    ai_resume = TailoredResume(
+        name="Test",
+        professional_summary="Vývojář.",
+        technical_skills=["Python"],
+        experience=[],
+        role_targeted_for="Developer",
+    )
+    out = generate_tailored_resume(
+        _GenerateStubProvider(ai_resume),
+        _make_job(),
+        candidate,
+        output_language="cs",
+    )
+
+    assert len(out.experience) == 1
+    assert out.experience[0].title.startswith("Vývojář")
+    assert "Developer" not in out.experience[0].title
 
 
 # ---------------------------------------------------------------------------
@@ -979,7 +1126,7 @@ def test_refine_safety_net_does_not_resurrect_excluded_role_when_candidate_was_f
     )
 
     titles = [s.title for s in out.resume.experience]
-    assert "Software Developer" in titles
+    assert "Softwarový vývojář" in titles
     assert "IT Tester" not in titles
     assert "IT Tester" not in (out.explanation or "")
 
@@ -1125,12 +1272,21 @@ def test_candidate_has_linkedin_detects_raw_text():
     assert _candidate_has_linkedin(candidate)
 
 
-def test_candidate_has_linkedin_detects_linkedin_url():
+def test_candidate_has_linkedin_ignores_url_only_profiles():
+    """URL extracted from CV footer no longer counts as a LinkedIn export.
+
+    Regression for the bug report image where a Czech resume with only a
+    CV uploaded got the explanation "your LinkedIn doesn't have X" - the
+    AI was reasoning from a phantom LinkedIn signal that came from the
+    CV footer URL alone. ``_candidate_has_linkedin`` now requires either
+    the raw export text or a profile entry that the LinkedIn parser
+    actually labelled.
+    """
     candidate = CandidateProfile(
         full_name="X",
         linkedin_url="https://www.linkedin.com/in/test",
     )
-    assert _candidate_has_linkedin(candidate)
+    assert not _candidate_has_linkedin(candidate)
 
 
 def test_candidate_has_linkedin_detects_source_label():

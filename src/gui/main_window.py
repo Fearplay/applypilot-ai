@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 
 from ..ai.base import BaseAIProvider
 from ..ai.provider_factory import build_provider
+from ..ai.pricing import lookup_pricing
 from ..config import Settings, load_settings
 from ..i18n import get_language, register_listener, set_language, t
 from ..models.candidate import CandidateProfile
@@ -63,8 +64,10 @@ from .history_page import HistoryPage
 from .match_report_page import MatchReportPage
 from .output_language_dialog import OutputLanguageDialog
 from .questions_dialog import QuestionsDialog
+from .refine_confirm_dialog import RefineConfirmDialog
 from .setup_page import SetupPage
 from .theme import Tokens
+from .widgets.session_cost_label import SessionCostLabel
 from .widgets.sidebar import Sidebar, SidebarItem
 from .widgets.status_chip import StatusChip
 from .workers import run_in_background
@@ -117,6 +120,12 @@ class WorkflowState:
     #: is regenerated from scratch (new package) so the previous round's
     #: context never bleeds into a different analysis.
     last_refine_explanation: str = ""
+    #: ``True`` once the user ticks "Don't ask again this session" in
+    #: :class:`RefineConfirmDialog`. Reset on app restart so the safer
+    #: default returns next time. Settings.ai_confirm_refine still wins:
+    #: when the env flag is False the modal never shows in the first
+    #: place regardless of this field.
+    skip_refine_confirm: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -489,7 +498,14 @@ class MainWindow(QMainWindow):
         self._history_page.open_in_app_requested.connect(self._on_open_history_in_app)
         self._stack.addWidget(self._history_page)
 
-        self.setStatusBar(QStatusBar())
+        status_bar = QStatusBar()
+        # Live AI session counter on the left so the user always sees
+        # "AI: N calls - X tokens - ~$Y this session" even when the rest
+        # of the status bar is empty. Helps spot the next time something
+        # spends money unexpectedly.
+        self._session_cost_label = SessionCostLabel(self)
+        status_bar.addWidget(self._session_cost_label)
+        self.setStatusBar(status_bar)
         self._build_menu()
 
     def _build_menu(self) -> None:
@@ -609,6 +625,44 @@ class MainWindow(QMainWindow):
         self._setup_page.set_provider(self._provider)
         self._refresh_provider_chip()
 
+    def _set_provider_trigger(self, trigger: str) -> None:
+        """Best-effort tag for the next AI call. Skips fake providers."""
+        setter = getattr(self._provider, "set_trigger", None)
+        if callable(setter):
+            try:
+                setter(trigger)
+            except Exception:  # pragma: no cover - audit must not break flow
+                logger.debug("set_trigger failed", exc_info=True)
+
+    def _estimate_refine_cost(self) -> float | None:
+        """Rough $ estimate shown in :class:`RefineConfirmDialog`.
+
+        Uses the current resume size as a proxy for the prompt + a
+        baseline 1500 token completion. Better than nothing - the actual
+        per-call price prints in the audit log right after the request.
+        Returns ``None`` when the model has no entry in the pricing
+        table (Custom / Ollama / unknown alias).
+        """
+        pricing = lookup_pricing(self._settings.ai_model)
+        if pricing.input_per_million == 0.0 and pricing.output_per_million == 0.0:
+            return None
+        resume_chars = 0
+        if self._state.resume is not None:
+            try:
+                resume_chars = len(
+                    self._state.resume.model_dump_json()
+                )
+            except Exception:
+                resume_chars = 0
+        # ~4 chars per token on average; pad for the system prompt and
+        # candidate context (~6k tokens for a typical CV+JD bundle).
+        prompt_tokens = max(2000, (resume_chars // 4) + 6000)
+        completion_tokens = 1500
+        return (
+            prompt_tokens * pricing.input_per_million
+            + completion_tokens * pricing.output_per_million
+        ) / 1_000_000.0
+
     # ----------------------------------------------------------- handlers
     def _open_settings(self) -> None:
         dlg = SettingsDialog(self._settings, parent=self)
@@ -716,6 +770,7 @@ class MainWindow(QMainWindow):
         assert job is not None and candidate is not None
 
         self.statusBar().showMessage(t("status.computing_match"))
+        self._set_provider_trigger("MainWindow._start_match")
 
         def work():
             return compute_match(
@@ -781,6 +836,7 @@ class MainWindow(QMainWindow):
         self._setup_page.set_analysis_blocked(
             t("setup.status.blocked.generating_questions")
         )
+        self._set_provider_trigger("MainWindow._fetch_clarifying_questions")
 
         def work():
             return generate_questions(
@@ -857,6 +913,7 @@ class MainWindow(QMainWindow):
         self._setup_page.set_analysis_blocked(
             t("setup.status.blocked.recomputing")
         )
+        self._set_provider_trigger("MainWindow._start_match_after_answers")
 
         def work():
             return compute_match(
@@ -925,6 +982,8 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage(t("status.generating_docs"))
         self._sidebar.set_activity(t("status.generating_docs"))
+        self._match_page.set_generation_enabled(False)
+        self._set_provider_trigger("MainWindow._start_document_generation")
 
         def work():
             resume = generate_tailored_resume(
@@ -1062,6 +1121,7 @@ class MainWindow(QMainWindow):
 
     def _on_documents_done(self, result) -> None:
         resume, cover, interview, gaps = result
+        self._match_page.set_generation_enabled(True)
         self._state.resume = resume
         self._state.cover_letter = cover
         self._state.interview = interview
@@ -1157,6 +1217,28 @@ class MainWindow(QMainWindow):
             self._docs_page.set_refine_enabled(True)
             return
 
+        # Confirm-before-spending modal: the user complained about
+        # feeling charged "while AFK" - the actual fix is to make every
+        # refine call require an active confirmation by default. The
+        # checkbox in the dialog suppresses the prompt for the rest of
+        # the session, the env flag (AI_CONFIRM_REFINE) suppresses it
+        # globally, but the safe default after restart is to ask again.
+        if (
+            self._settings.ai_confirm_refine
+            and not state.skip_refine_confirm
+        ):
+            estimated = self._estimate_refine_cost()
+            confirm = RefineConfirmDialog(
+                model=self._settings.ai_model,
+                estimated_usd=estimated,
+                parent=self,
+            )
+            if confirm.exec() != QDialog.Accepted:
+                self._docs_page.set_refine_enabled(True)
+                return
+            if confirm.dont_ask_again():
+                state.skip_refine_confirm = True
+
         provider = self._provider
         current_resume = state.resume
         job = state.job
@@ -1183,6 +1265,15 @@ class MainWindow(QMainWindow):
 
         self._docs_page.set_status(t("docs.refine.status"))
         self.statusBar().showMessage(t("docs.refine.status"))
+
+        # Tag the upcoming AI calls in the audit log so the user can
+        # answer "who initiated this refine?" weeks later.
+        feedback_preview = (feedback or "").strip().replace("\n", " ")[:120]
+        trigger = (
+            "MainWindow._on_refine_requested feedback="
+            f"{feedback_preview!r}"
+        )
+        self._set_provider_trigger(trigger)
 
         def work():
             return refine_tailored_resume(
@@ -1224,6 +1315,7 @@ class MainWindow(QMainWindow):
     def _on_workflow_failed(self, message: str) -> None:
         self.statusBar().clearMessage()
         self._sidebar.set_activity(t("status.workflow_error"))
+        self._match_page.set_generation_enabled(True)
         # Make sure the Run analysis button always recovers when the
         # background pipeline crashes; otherwise the user is stranded
         # with a permanently disabled primary action.

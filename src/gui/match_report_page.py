@@ -263,7 +263,15 @@ class MatchReportPage(QWidget):
         outer.addWidget(bar)
 
     # ----------------------------------------------------------- public
+    def set_generation_enabled(self, enabled: bool) -> None:
+        """Enable / disable the document-generation action."""
+        self._gen_btn.setEnabled(enabled)
+        self._gen_btn.setText(
+            t("match.generate") if enabled else t("match.generate.busy")
+        )
+
     def set_report(self, report: MatchReport) -> None:
+        self.set_generation_enabled(True)
         self._badge.set_score(report.overall_score, "")
         cs = report.category_scores
         self._tech.set_value(cs.technical_skills)
