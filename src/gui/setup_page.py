@@ -15,6 +15,7 @@ fetch + profile build) in one click.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 from pathlib import Path
 
@@ -51,6 +52,12 @@ from .widgets.section_card import SectionCard
 from .workers import run_in_background
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _ProfileBuildResult:
+    profile: CandidateProfile
+    github_warning: str = ""
 
 
 class SetupPage(QWidget):
@@ -534,20 +541,23 @@ class SetupPage(QWidget):
             cv_text = parse_resume_file(cv_path) if cv_path else ""
             li_text = parse_linkedin_export(li_path) if li_path else ""
             projects: list[GitHubProject] = []
+            github_warning = ""
             if gh_user:
                 try:
                     projects = list(
                         fetch_github_projects(gh_user, token, job=job)
                     )
                 except GitHubError as exc:
+                    github_warning = str(exc)
                     logger.warning("GitHub fetch failed: %s", exc)
-            return build_candidate_profile(
+            profile = build_candidate_profile(
                 provider,
                 cv_text=cv_text,
                 linkedin_text=li_text,
                 github_username=gh_user or None,
                 github_projects=projects,
             )
+            return _ProfileBuildResult(profile=profile, github_warning=github_warning)
 
         run_in_background(
             self._pool,
@@ -556,7 +566,14 @@ class SetupPage(QWidget):
             on_failed=self._on_pipeline_failed,
         )
 
-    def _on_profile_done(self, profile: CandidateProfile) -> None:
+    def _on_profile_done(self, result) -> None:
+        if isinstance(result, _ProfileBuildResult):
+            profile = result.profile
+            github_warning = result.github_warning
+        else:
+            # Backwards compatibility for any older worker result still in flight.
+            profile = result
+            github_warning = ""
         self.set_busy(False)
         self.set_status(
             t(
@@ -566,6 +583,12 @@ class SetupPage(QWidget):
                 projects=len(profile.projects),
             )
         )
+        if github_warning:
+            QMessageBox.warning(
+                self,
+                t("setup.github.warning.title"),
+                t("setup.github.warning.body", message=github_warning),
+            )
         self.profile_built.emit(profile)
 
     def _on_pipeline_failed(self, message: str) -> None:

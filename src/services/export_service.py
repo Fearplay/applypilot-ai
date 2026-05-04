@@ -822,9 +822,20 @@ def _styled_sidebar(
         )
 
     languages_html = ""
-    if candidate.spoken_languages:
+    # Prefer the resume's own languages list when populated. Refine can
+    # mutate ``resume.spoken_languages`` (deterministic helper applies
+    # explicit "change German to B2" requests there), so falling back to
+    # the candidate profile would silently undo those edits. Empty list
+    # means the resume hasn't been touched yet -> use the candidate as
+    # the source of truth.
+    languages_source = (
+        list(resume.spoken_languages)
+        if resume.spoken_languages
+        else list(candidate.spoken_languages)
+    )
+    if languages_source:
         rows: list[str] = []
-        for entry in candidate.spoken_languages:
+        for entry in languages_source:
             # Accept either plain "Czech" or "Czech (C2)" / "Czech - native".
             name, level = entry, ""
             for sep in ("(", " - ", " \u2013 ", ":"):
