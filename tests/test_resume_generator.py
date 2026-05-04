@@ -627,3 +627,350 @@ def test_fixup_education_language_still_translates_english_to_czech():
     assert "Bakal" in edu.title
     assert "Provozně ekonomická" in edu.subtitle
     assert "Praha" in edu.subtitle
+
+
+# ---------------------------------------------------------------------------
+# Issue 2: cross-language / employment-type-suffix dedup of experience rows
+# ---------------------------------------------------------------------------
+
+
+def test_dedup_resume_sections_collapses_internship_suffix_and_separator():
+    """Reproduces the original bug report: two ``Developer (Python ...)``
+    rows where one carries an ``"Internship"`` suffix and ASCII dashes
+    while the twin uses Czech middle-dots survived dedup before the
+    fuzzy match was added. Both rows describe the same role; one
+    survivor is correct.
+    """
+    resume = TailoredResume(
+        name="Test",
+        professional_summary="Developer.",
+        experience=[
+            ResumeSection(
+                title="Developer (Python - Chatbot - Game dev)",
+                subtitle="CreatiWeb - AppYours - IBM - Internship",
+                period="2019 - 2020",
+                bullets=[ResumeBullet(text="Python game development a IBM Watson chatbot.")],
+            ),
+            ResumeSection(
+                title="Developer (Python · Chatbot · Game dev)",
+                subtitle="CreatiWeb · AppYours · IBM",
+                period="2019 - 2020",
+                bullets=[ResumeBullet(text="Python game development and IBM Watson chatbot.")],
+            ),
+        ],
+    )
+    _dedup_resume_sections(resume)
+    assert len(resume.experience) == 1
+    bullets = [b.text for b in resume.experience[0].bullets]
+    assert any("Watson" in b for b in bullets)
+
+
+def test_dedup_resume_sections_collapses_when_only_subtitle_separator_differs():
+    """The second twin has the very same subtitle but with a different
+    set of separator characters - dedup must still merge."""
+    resume = TailoredResume(
+        name="Test",
+        professional_summary="Developer.",
+        experience=[
+            ResumeSection(
+                title="Developer",
+                subtitle="A | B | C",
+                period="2020 - 2021",
+                bullets=[ResumeBullet(text="One.")],
+            ),
+            ResumeSection(
+                title="Developer",
+                subtitle="A · B · C",
+                period="2020 - 2021",
+                bullets=[ResumeBullet(text="Two.")],
+            ),
+        ],
+    )
+    _dedup_resume_sections(resume)
+    assert len(resume.experience) == 1
+
+
+# ---------------------------------------------------------------------------
+# Issue 3: refine respects an explicit "smaž / delete" instruction
+# ---------------------------------------------------------------------------
+
+
+def _candidate_with_two_roles_and_optional_first():
+    """Two distinct roles: a "first job" that the user wants gone and a
+    "current job" that should always survive. The first role lives only
+    in the candidate profile (and in the resume the user is looking at)
+    so the safety net would re-inject it without the new diff guard.
+    """
+    return CandidateProfile(
+        full_name="Test",
+        experience=[
+            WorkExperience(
+                id="exp-old",
+                title="Junior Developer",
+                company="OldCorp",
+                period="2018 - 2019",
+                bullets=["Wrote my first Python."],
+                source="cv",
+            ),
+            WorkExperience(
+                id="exp-current",
+                title="Senior Engineer",
+                company="NewCorp",
+                period="2024 - present",
+                bullets=["Lead the platform team."],
+                source="cv",
+            ),
+        ],
+    )
+
+
+def _resume_with_two_roles():
+    return TailoredResume(
+        name="Test",
+        professional_summary="Engineer.",
+        technical_skills=["Python"],
+        experience=[
+            ResumeSection(
+                title="Junior Developer",
+                subtitle="OldCorp",
+                period="2018 - 2019",
+                bullets=[ResumeBullet(text="Wrote my first Python.")],
+            ),
+            ResumeSection(
+                title="Senior Engineer",
+                subtitle="NewCorp",
+                period="2024 - present",
+                bullets=[ResumeBullet(text="Lead the platform team.")],
+            ),
+        ],
+        role_targeted_for="Engineer",
+    )
+
+
+def test_refine_with_delete_intent_does_not_reinject_dropped_role():
+    """When the user types 'smaž tu pozici X' and the AI honours it,
+    the experience safety net must NOT undo the deletion by re-adding
+    the row from the candidate profile. Pre-fix this regressed the
+    resume back to its original state."""
+    candidate = _candidate_with_two_roles_and_optional_first()
+    starting = _resume_with_two_roles()
+
+    # AI returns a resume with the OldCorp row removed.
+    refined = TailoredResume(
+        name=starting.name,
+        professional_summary=starting.professional_summary,
+        technical_skills=list(starting.technical_skills),
+        experience=[
+            ResumeSection(
+                title="Senior Engineer",
+                subtitle="NewCorp",
+                period="2024 - present",
+                bullets=[ResumeBullet(text="Lead the platform team.")],
+            ),
+        ],
+        role_targeted_for="Engineer",
+    )
+    provider = _StubProvider(RefinedResume(resume=refined, explanation="Smazáno."))
+
+    out = refine_tailored_resume(
+        provider, starting,
+        "smaž pozici Junior Developer u OldCorp prosím",
+        _make_job(), candidate,
+        output_language="cs",
+    )
+
+    titles = [s.title for s in out.resume.experience]
+    assert "Senior Engineer" in titles
+    assert "Junior Developer" not in titles
+
+
+def test_refine_without_delete_intent_keeps_safety_net_active():
+    """Counter-test for the diff guard: a stylistic-only feedback must
+    NOT disarm the safety net, otherwise we'd silently drop rows the AI
+    accidentally lost. Same fixture but the user asks for prose
+    polish, so the OldCorp role must come back."""
+    candidate = _candidate_with_two_roles_and_optional_first()
+    starting = _resume_with_two_roles()
+
+    refined = TailoredResume(
+        name=starting.name,
+        professional_summary=starting.professional_summary,
+        technical_skills=list(starting.technical_skills),
+        experience=[
+            ResumeSection(
+                title="Senior Engineer",
+                subtitle="NewCorp",
+                period="2024 - present",
+                bullets=[ResumeBullet(text="Lead the platform team.")],
+            ),
+        ],
+        role_targeted_for="Engineer",
+    )
+    provider = _StubProvider(RefinedResume(resume=refined, explanation="Polished."))
+
+    out = refine_tailored_resume(
+        provider, starting,
+        "Make the summary punchier please",
+        _make_job(), candidate,
+        output_language="en",
+    )
+
+    titles = [s.title for s in out.resume.experience]
+    assert "Junior Developer" in titles
+    assert "Senior Engineer" in titles
+
+
+# ---------------------------------------------------------------------------
+# Issue 6: bullet + summary scrubbing in CZ resume
+# ---------------------------------------------------------------------------
+
+
+def test_fixup_education_language_scrubs_acting_inside_czech_bullet():
+    """The AI's favourite mistake: an otherwise Czech bullet that
+    sneaks 'acting' through ('jako acting QA Lead'). The deterministic
+    cleanup pass replaces it with 'pověřený' so the rendered resume is
+    consistently Czech."""
+    resume = TailoredResume(
+        name="X",
+        professional_summary="Software QA Engineer a acting QA Lead s 4 lety zkušeností.",
+        experience=[
+            ResumeSection(
+                title="Software QA Engineer",
+                subtitle="Gen Digital",
+                period="06/2023 - 07/2025",
+                bullets=[
+                    ResumeBullet(
+                        text="Jako acting QA Lead jsem vedl tým 2 QA inženýrů a koordinoval review.",
+                    ),
+                ],
+            ),
+        ],
+    )
+    _fixup_education_language(resume, "cs")
+    bullet_text = resume.experience[0].bullets[0].text
+    assert "acting" not in bullet_text.lower()
+    assert "pověřený" in bullet_text.lower()
+    # Summary is scrubbed too.
+    assert "acting" not in resume.professional_summary.lower()
+    assert "pověřený" in resume.professional_summary.lower()
+
+
+def test_fixup_education_language_does_not_touch_unmapped_english_words():
+    """Conservative scrub: we only translate words listed in our
+    table. Unrelated English noise stays put so we don't accidentally
+    Czech-ify product or technology names."""
+    resume = TailoredResume(
+        name="X",
+        professional_summary="Senior Engineer at Gen Digital.",
+        experience=[
+            ResumeSection(
+                title="Engineer",
+                subtitle="Gen Digital",
+                period="2024 - present",
+                bullets=[ResumeBullet(text="Used Playwright for E2E testing.")],
+            ),
+        ],
+    )
+    _fixup_education_language(resume, "cs")
+    # Unchanged because no key in the translation table appears.
+    assert resume.professional_summary == "Senior Engineer at Gen Digital."
+    assert resume.experience[0].bullets[0].text == "Used Playwright for E2E testing."
+
+
+# ---------------------------------------------------------------------------
+# Refine + already-excluded rows: the safety net must NEVER re-inject a
+# row the user previously chose to drop via the discrepancy questions or
+# the section-removal dialog. The fix lives in ``main_window`` (the GUI
+# now passes ``filter_profile_entries(candidate, excluded_ids)`` to the
+# refine call) but we pin the contract from the service-level here too:
+# given a candidate that no longer contains the excluded row, the
+# safety net has nothing to re-inject.
+# ---------------------------------------------------------------------------
+
+
+def test_refine_safety_net_does_not_resurrect_excluded_role_when_candidate_was_filtered():
+    """Reproduces the 'IT Tester comes back on every refine' regression.
+
+    In the GUI flow the user excluded the IT Tester row via the section-
+    removal dialog. The full ``CandidateProfile`` on ``WorkflowState``
+    still carries that row, but ``main_window`` now filters it out
+    before calling ``refine_tailored_resume``. This test pins the
+    contract: when the candidate handed to the refine flow does NOT
+    contain the row, the safety net cannot bring it back even if the
+    AI's output omits it and the feedback contains no delete keyword.
+    """
+    full_candidate = CandidateProfile(
+        full_name="Test",
+        experience=[
+            WorkExperience(
+                id="exp-keep",
+                title="Software Developer",
+                company="Air Bank a.s.",
+                period="11/2021 - 01/2022",
+                bullets=["Java backend."],
+                source="cv",
+            ),
+            WorkExperience(
+                id="exp-drop",
+                title="IT Tester",
+                company="Trask Solutions",
+                period="08/2021 - 10/2021",
+                bullets=["Manual QA."],
+                source="cv",
+            ),
+        ],
+    )
+    from src.services.profile_dedup import filter_profile_entries
+    candidate = filter_profile_entries(full_candidate, {"exp-drop"})
+
+    starting = TailoredResume(
+        name="Test",
+        professional_summary="Developer.",
+        technical_skills=["Java"],
+        experience=[
+            ResumeSection(
+                title="Software Developer",
+                subtitle="Air Bank a.s.",
+                period="11/2021 - 01/2022",
+                bullets=[ResumeBullet(text="Java backend.")],
+            ),
+            ResumeSection(
+                title="IT Tester",
+                subtitle="Trask Solutions",
+                period="08/2021 - 10/2021",
+                bullets=[ResumeBullet(text="Manual QA.")],
+            ),
+        ],
+        role_targeted_for="Developer",
+    )
+    refined = TailoredResume(
+        name="Test",
+        professional_summary="Developer.",
+        technical_skills=["Java"],
+        experience=[
+            ResumeSection(
+                title="Software Developer",
+                subtitle="Air Bank a.s.",
+                period="11/2021 - 01/2022",
+                bullets=[ResumeBullet(text="Java backend.")],
+            ),
+        ],
+        role_targeted_for="Developer",
+    )
+    provider = _StubProvider(RefinedResume(resume=refined, explanation="Translated."))
+
+    # Stylistic feedback - no delete keyword. Without the GUI-side filter
+    # the safety net would helpfully re-inject IT Tester from the FULL
+    # candidate; with the filter the candidate has no such row and the
+    # safety net stays quiet.
+    out = refine_tailored_resume(
+        provider, starting,
+        "Translate the Software Developer bullet to Czech and bump German to B2.",
+        _make_job(), candidate,
+        output_language="cs",
+    )
+
+    titles = [s.title for s in out.resume.experience]
+    assert "Software Developer" in titles
+    assert "IT Tester" not in titles
+    assert "IT Tester" not in (out.explanation or "")

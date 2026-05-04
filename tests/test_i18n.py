@@ -94,3 +94,57 @@ def test_t_returns_text_when_format_key_missing():
     # ``status.match_score`` expects ``score``; missing kwarg returns the raw text.
     raw = i18n.t("status.match_score")
     assert "{score}" in raw
+
+
+# ---------------------------------------------------------------------------
+# Issue 4: UI language is loaded ONLY from the saved preference now.
+# The deprecated ``APPLYPILOT_UI_LANGUAGE`` env override has been removed;
+# these tests pin the new ordering down so a future refactor cannot quietly
+# bring the env override back.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_ui_language_reads_saved_preference(monkeypatch):
+    """A saved 'cs' preference wins over the implicit default."""
+    from src import config as config_module
+    from src.utils import preferences as prefs_module
+
+    monkeypatch.delenv("APPLYPILOT_UI_LANGUAGE", raising=False)
+
+    def fake_get(key, default=None):
+        if key == "ui_language":
+            return "cs"
+        return default
+
+    monkeypatch.setattr(prefs_module, "get_preference", fake_get)
+    assert config_module._resolve_ui_language() == "cs"
+
+
+def test_resolve_ui_language_ignores_env_override(monkeypatch):
+    """Even with the legacy env variable set, only the preference matters."""
+    from src import config as config_module
+    from src.utils import preferences as prefs_module
+
+    monkeypatch.setenv("APPLYPILOT_UI_LANGUAGE", "cs")
+
+    def fake_get(key, default=None):
+        if key == "ui_language":
+            return "en"
+        return default
+
+    monkeypatch.setattr(prefs_module, "get_preference", fake_get)
+    assert config_module._resolve_ui_language() == "en"
+
+
+def test_resolve_ui_language_defaults_to_english_when_no_preference(monkeypatch):
+    """First-time users get a predictable English UI."""
+    from src import config as config_module
+    from src.utils import preferences as prefs_module
+
+    monkeypatch.delenv("APPLYPILOT_UI_LANGUAGE", raising=False)
+
+    def fake_get(key, default=None):
+        return default
+
+    monkeypatch.setattr(prefs_module, "get_preference", fake_get)
+    assert config_module._resolve_ui_language() == "en"

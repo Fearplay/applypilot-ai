@@ -256,13 +256,13 @@ def test_styled_html_uses_explicit_output_language_over_diacritic_sniff():
     # Use closing-tag-anchored substrings so "Profile" doesn't trip the
     # bare-substring "Profil" check (and vice versa for Czech).
     assert "<h2>Profile</h2>" in html_en
-    assert "<h2>Experience</h2>" in html_en
+    assert "<h2>Work Experience</h2>" in html_en
     assert "Pracovní zkušenosti" not in html_en
 
     html_cs = tailored_resume_to_styled_html(resume, output_language="cs")
     assert "<h2>Profil</h2>" in html_cs
     assert "<h2>Pracovní zkušenosti</h2>" in html_cs
-    assert "<h2>Experience</h2>" not in html_cs
+    assert "<h2>Work Experience</h2>" not in html_cs
 
 
 def test_resume_to_markdown_strips_em_and_en_dashes():
@@ -423,7 +423,7 @@ def test_resume_to_markdown_localises_section_headers_for_czech():
     md_en = resume_to_markdown(resume, output_language="en")
     assert "## Professional Summary" in md_en
     assert "## Technical Skills" in md_en
-    assert "## Experience" in md_en
+    assert "## Work Experience" in md_en
     assert "## Certifications" in md_en
 
 
