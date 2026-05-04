@@ -438,12 +438,17 @@ _STRINGS: dict[str, dict[str, str]] = {
         "settings.title": "AI provider settings",
         "settings.section": "AI provider",
         "settings.tip_html": (
-            "<b>Tip:</b> this dialog only affects the <b>current session</b>. "
-            "Restarting the app reloads everything from <code>.env</code> in "
-            "the project root - copy <code>.env.example</code> to "
-            "<code>.env</code> and edit <code>AI_PROVIDER</code>, "
-            "<code>AI_API_KEY</code>, <code>AI_BASE_URL</code> and "
-            "<code>AI_MODEL</code> to make the change permanent."
+            "<b>Tip:</b> API keys saved here are stored in your operating "
+            "system keyring (Windows Credential Manager / macOS Keychain / "
+            "Linux Secret Service). They survive restarts and never touch "
+            "<code>.env</code>. The <code>.env</code> file stays as a "
+            "convenience for CI / power users."
+        ),
+        "settings.tip_html.json_fallback": (
+            "<b>Note:</b> the OS keyring is unavailable, so secrets fall "
+            "back to <code>~/.applypilot/secrets.json</code> with "
+            "<code>0o600</code> permissions. Still safer than "
+            "<code>.env</code>; never check that file into git."
         ),
         "settings.provider": "Provider",
         "settings.provider.fake": "fake (offline demo, default)",
@@ -457,9 +462,37 @@ _STRINGS: dict[str, dict[str, str]] = {
             "Calls the OpenAI-compatible /v1/chat/completions endpoint at the "
             "Base URL below. Requires a valid API key."
         ),
+        "settings.preset": "Preset",
+        "settings.preset.tip": (
+            "Pick a vendor to auto-fill Base URL + a recommended Model. "
+            "Custom keeps whatever you typed manually."
+        ),
         "settings.base_url": "Base URL",
         "settings.api_key": "API key",
+        "settings.api_key.show": "Show",
+        "settings.api_key.hide": "Hide",
+        "settings.api_key.test": "Test connection",
+        "settings.api_key.delete": "Delete from keyring",
+        "settings.api_key.testing": "Testing connection...",
+        "settings.api_key.test_ok": "OK - {n} models available.",
+        "settings.api_key.test_fail": "Failed: {error}",
+        "settings.api_key.test_no_url": "Fill Base URL + API key first.",
+        "settings.api_key.deleted": "Removed from keyring + cleared field.",
+        "settings.api_key.delete_failed": "Could not remove from keyring: {error}",
         "settings.model": "Model",
+        "settings.github.title": "GitHub",
+        "settings.github.token": "GitHub token (optional)",
+        "settings.github.tip_html": (
+            "Without a token GitHub allows ~60 unauthenticated requests/hour "
+            "per IP, with a token ~5000/hour. Generate a fine-grained "
+            "<b>read-only</b> personal access token at "
+            "<a href='https://github.com/settings/personal-access-tokens'>"
+            "github.com/settings/personal-access-tokens</a>. Grant it "
+            "<i>public_repo</i> read scope only."
+        ),
+        "settings.github.delete": "Delete from keyring",
+        "settings.github.deleted": "GitHub token removed from keyring.",
+        "settings.github.delete_failed": "Could not remove GitHub token: {error}",
         "settings.examples_html": (
             "<b>Examples</b><br>"
             "&bull; OpenAI: <code>https://api.openai.com/v1</code> "
@@ -471,6 +504,24 @@ _STRINGS: dict[str, dict[str, str]] = {
             "&bull; Ollama (local): <code>http://localhost:11434/v1</code> "
             "<code>llama3.1</code>"
         ),
+        "settings.save": "Save",
+        "settings.cancel": "Cancel",
+        "settings.confirm_refine": "Confirm before each AI refine call (recommended)",
+        "settings.confirm_refine.tip": (
+            "Shows a small modal with the estimated $ cost before every "
+            "'Refine with AI' click. Untick only if you trust your fingers."
+        ),
+        "settings.preset.openai": "OpenAI",
+        "settings.preset.groq": "Groq",
+        "settings.preset.mistral": "Mistral",
+        "settings.preset.openrouter": "OpenRouter",
+        "settings.preset.deepseek": "DeepSeek",
+        "settings.preset.anthropic": "Anthropic (OpenAI-compat)",
+        "settings.preset.gemini": "Google Gemini (OpenAI-compat)",
+        "settings.preset.ollama": "Ollama (local)",
+        "settings.preset.lmstudio": "LM Studio (local)",
+        "settings.preset.custom": "Custom (manual)",
+        "settings.preset.fake": "fake (offline demo)",
         # ---- workflow status / errors ----
         "status.computing_match": "Computing match score...",
         "status.recomputing_match": "Recomputing match with your answers...",
@@ -892,12 +943,17 @@ _STRINGS: dict[str, dict[str, str]] = {
         "settings.title": "Nastavení AI poskytovatele",
         "settings.section": "AI poskytovatel",
         "settings.tip_html": (
-            "<b>Tip:</b> tento dialog ovlivní pouze <b>aktuální spuštění</b>. "
-            "Po restartu se vše načte znovu z <code>.env</code> v rootu "
-            "projektu - zkopíruj <code>.env.example</code> na "
-            "<code>.env</code> a uprav <code>AI_PROVIDER</code>, "
-            "<code>AI_API_KEY</code>, <code>AI_BASE_URL</code> a "
-            "<code>AI_MODEL</code>, aby změna byla trvalá."
+            "<b>Tip:</b> API klíče zadané tady se ukládají do OS keyringu "
+            "(Windows Credential Manager / macOS Keychain / Linux Secret "
+            "Service). Zůstanou napříč restarty a do <code>.env</code> se "
+            "nikdy nezapisují. Soubor <code>.env</code> zůstává jen jako "
+            "pohodlí pro CI / pokročilé uživatele."
+        ),
+        "settings.tip_html.json_fallback": (
+            "<b>Pozor:</b> OS keyring není dostupný, secrety padnou do "
+            "<code>~/.applypilot/secrets.json</code> s právy "
+            "<code>0o600</code>. Pořád bezpečnější než <code>.env</code>, "
+            "ale ten soubor nikdy nepushuj do gitu."
         ),
         "settings.provider": "Poskytovatel",
         "settings.provider.fake": "fake (offline demo, výchozí)",
@@ -911,9 +967,37 @@ _STRINGS: dict[str, dict[str, str]] = {
             "Volá kompatibilní endpoint /v1/chat/completions na Base URL "
             "níže. Vyžaduje platný API klíč."
         ),
+        "settings.preset": "Přednastavení",
+        "settings.preset.tip": (
+            "Vyber dodavatele a Base URL + doporučený Model se vyplní samy. "
+            "Custom ponechá to, co máš ručně napsané."
+        ),
         "settings.base_url": "Base URL",
         "settings.api_key": "API klíč",
+        "settings.api_key.show": "Zobrazit",
+        "settings.api_key.hide": "Skrýt",
+        "settings.api_key.test": "Otestovat spojení",
+        "settings.api_key.delete": "Smazat z keyringu",
+        "settings.api_key.testing": "Testuji spojení...",
+        "settings.api_key.test_ok": "OK - {n} modelů dostupných.",
+        "settings.api_key.test_fail": "Selhalo: {error}",
+        "settings.api_key.test_no_url": "Vyplň nejdřív Base URL a API klíč.",
+        "settings.api_key.deleted": "Smazáno z keyringu a z pole.",
+        "settings.api_key.delete_failed": "Z keyringu se nepodařilo smazat: {error}",
         "settings.model": "Model",
+        "settings.github.title": "GitHub",
+        "settings.github.token": "GitHub token (volitelné)",
+        "settings.github.tip_html": (
+            "Bez tokenu má GitHub limit ~60 anonymních requestů/hod na IP, "
+            "s tokenem ~5000/hod. Vygeneruj fine-grained <b>read-only</b> "
+            "personal access token na "
+            "<a href='https://github.com/settings/personal-access-tokens'>"
+            "github.com/settings/personal-access-tokens</a>. Stačí scope "
+            "<i>public_repo</i> read."
+        ),
+        "settings.github.delete": "Smazat z keyringu",
+        "settings.github.deleted": "GitHub token smazán z keyringu.",
+        "settings.github.delete_failed": "GitHub token se nepodařilo smazat: {error}",
         "settings.examples_html": (
             "<b>Příklady</b><br>"
             "&bull; OpenAI: <code>https://api.openai.com/v1</code> "
@@ -925,6 +1009,24 @@ _STRINGS: dict[str, dict[str, str]] = {
             "&bull; Ollama (lokálně): <code>http://localhost:11434/v1</code> "
             "<code>llama3.1</code>"
         ),
+        "settings.save": "Uložit",
+        "settings.cancel": "Zrušit",
+        "settings.confirm_refine": "Potvrdit před každým AI refine voláním (doporučeno)",
+        "settings.confirm_refine.tip": (
+            "Před každým kliknutím na 'Refine with AI' ukáže krátký dialog "
+            "s odhadem ceny. Vypni jen pokud věříš svým prstům."
+        ),
+        "settings.preset.openai": "OpenAI",
+        "settings.preset.groq": "Groq",
+        "settings.preset.mistral": "Mistral",
+        "settings.preset.openrouter": "OpenRouter",
+        "settings.preset.deepseek": "DeepSeek",
+        "settings.preset.anthropic": "Anthropic (OpenAI-compat)",
+        "settings.preset.gemini": "Google Gemini (OpenAI-compat)",
+        "settings.preset.ollama": "Ollama (lokální)",
+        "settings.preset.lmstudio": "LM Studio (lokální)",
+        "settings.preset.custom": "Custom (ručně)",
+        "settings.preset.fake": "fake (offline demo)",
         "status.computing_match": "Počítám skóre shody...",
         "status.recomputing_match": "Přepočítávám shodu na základě tvých odpovědí...",
         "status.recomputing_match_short": "Přepočítávám shodu...",

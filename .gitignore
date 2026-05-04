@@ -38,6 +38,8 @@ env/
 ENV/
 env.bak/
 venv.bak/
+# Disposable venv created by build_exe.bat for the Windows EXE build
+.venv-build/
 
 # Testing & type checkers
 .pytest_cache/
@@ -71,6 +73,10 @@ logs/
 *.spec
 build/
 dist/
+# Resource files we DO want committed even though dist/ is ignored:
+# the build_exe.bat icon. Listed explicitly so a future ``dist/*``
+# unignore never accidentally drops the icon from history.
+!assets/applypilot.ico
 
 # Local app outputs (user-generated, may contain personal data)
 outputs/*

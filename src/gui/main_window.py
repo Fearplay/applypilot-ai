@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -11,14 +10,11 @@ from PySide6.QtCore import Qt, QThreadPool
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QDialog,
     QDialogButtonBox,
-    QFormLayout,
     QFrame,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QMainWindow,
     QMessageBox,
     QScrollArea,
@@ -31,7 +27,7 @@ from PySide6.QtWidgets import (
 from ..ai.base import BaseAIProvider
 from ..ai.provider_factory import build_provider
 from ..ai.pricing import lookup_pricing
-from ..config import Settings, load_settings
+from ..config import Settings
 from ..i18n import get_language, register_listener, set_language, t
 from ..models.candidate import CandidateProfile
 from ..models.documents import (
@@ -65,6 +61,7 @@ from .match_report_page import MatchReportPage
 from .output_language_dialog import OutputLanguageDialog
 from .questions_dialog import QuestionsDialog
 from .refine_confirm_dialog import RefineConfirmDialog
+from .settings_dialog import SettingsDialog
 from .setup_page import SetupPage
 from .theme import Tokens
 from .widgets.session_cost_label import SessionCostLabel
@@ -126,95 +123,6 @@ class WorkflowState:
     #: when the env flag is False the modal never shows in the first
     #: place regardless of this field.
     skip_refine_confirm: bool = False
-
-
-# ---------------------------------------------------------------------------
-# Settings dialog
-# ---------------------------------------------------------------------------
-class SettingsDialog(QDialog):
-    def __init__(self, settings: Settings, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle(t("settings.title"))
-        self.setMinimumWidth(560)
-
-        self._settings = settings
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 18, 20, 16)
-        layout.setSpacing(12)
-
-        title = QLabel(t("settings.section"))
-        title.setStyleSheet(
-            f"color: {Tokens.text}; font-size: 18px; font-weight: 600;"
-        )
-        layout.addWidget(title)
-
-        info = QLabel(t("settings.tip_html"))
-        info.setTextFormat(Qt.RichText)
-        info.setWordWrap(True)
-        info.setStyleSheet(
-            f"color: {Tokens.text}; font-size: 12px;"
-            f" background-color: {Tokens.surface_alt};"
-            f" border: 1px solid {Tokens.border};"
-            f" border-radius: 8px; padding: 10px 12px;"
-        )
-        layout.addWidget(info)
-
-        form = QFormLayout()
-        form.setSpacing(10)
-        self._provider_combo = QComboBox()
-        self._provider_combo.addItem(t("settings.provider.fake"), "fake")
-        self._provider_combo.addItem(
-            t("settings.provider.openai"),
-            "openai_compatible",
-        )
-        self._provider_combo.setItemData(
-            0,
-            t("settings.provider.fake_tip"),
-            Qt.ToolTipRole,
-        )
-        self._provider_combo.setItemData(
-            1,
-            t("settings.provider.openai_tip"),
-            Qt.ToolTipRole,
-        )
-        if settings.ai_provider == "openai_compatible":
-            self._provider_combo.setCurrentIndex(1)
-        form.addRow(t("settings.provider"), self._provider_combo)
-
-        self._base_url = QLineEdit(settings.ai_base_url)
-        form.addRow(t("settings.base_url"), self._base_url)
-
-        self._api_key = QLineEdit(settings.ai_api_key)
-        self._api_key.setEchoMode(QLineEdit.Password)
-        form.addRow(t("settings.api_key"), self._api_key)
-
-        self._model = QLineEdit(settings.ai_model)
-        form.addRow(t("settings.model"), self._model)
-        layout.addLayout(form)
-
-        hint = QLabel(t("settings.examples_html"))
-        hint.setTextFormat(Qt.RichText)
-        hint.setStyleSheet(f"color: {Tokens.text_muted}; font-size: 11px;")
-        layout.addWidget(hint)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
-        )
-        ok_btn = buttons.button(QDialogButtonBox.Ok)
-        ok_btn.setProperty("variant", "primary")
-        ok_btn.style().unpolish(ok_btn)
-        ok_btn.style().polish(ok_btn)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons, alignment=Qt.AlignRight)
-
-    def accepted_settings(self) -> Settings:
-        os.environ["AI_PROVIDER"] = self._provider_combo.currentData()
-        os.environ["AI_BASE_URL"] = self._base_url.text().strip()
-        os.environ["AI_API_KEY"] = self._api_key.text().strip()
-        os.environ["AI_MODEL"] = self._model.text().strip()
-        return load_settings()
 
 
 # ---------------------------------------------------------------------------
