@@ -100,7 +100,7 @@ _RESUME_MD_LABELS: dict[str, dict[str, str]] = {
         "summary": "Professional Summary",
         "skills": "Technical Skills",
         "projects": "Projects",
-        "experience": "Experience",
+        "experience": "Work Experience",
         "education": "Education",
         "certifications": "Certifications",
     },
@@ -367,7 +367,7 @@ def cover_letter_to_docx(cover: CoverLetter, path: str | Path) -> None:
 _RESUME_LABELS: dict[str, dict[str, str]] = {
     "en": {
         "profile": "Profile",
-        "experience": "Experience",
+        "experience": "Work Experience",
         "projects": "Projects",
         "education": "Education",
         "certifications": "Certifications",
@@ -706,8 +706,8 @@ html,body{font-family:'Inter','Segoe UI','Helvetica Neue',Arial,sans-serif;color
 .sb-section p, .sb-section li{font-size:9.5pt;color:#E0F7FA;margin-bottom:1.5mm;word-wrap:break-word}
 .sb-section a{color:#fff;text-decoration:none;border-bottom:1px dotted rgba(255,255,255,0.4)}
 .sb-section ul{list-style:none}
-.sb-section .contact-line{display:flex;align-items:flex-start;gap:2mm;font-size:9pt;margin-bottom:1.8mm}
-.sb-section .contact-line .ic{flex:0 0 4mm;color:#7DD3FC;font-weight:700;font-size:9pt}
+.sb-section .contact-line{display:flex;align-items:center;gap:2.2mm;font-size:9pt;margin-bottom:1.8mm}
+.sb-section .contact-line .ic{flex:0 0 5mm;color:#7DD3FC;font-weight:700;font-size:10.5pt;line-height:1;font-family:"Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji","Twemoji Mozilla",system-ui,sans-serif}
 .skill-group{margin-bottom:3.5mm}
 .skill-group .group-label{font-size:8.5pt;color:#7DD3FC;font-weight:600;margin-bottom:1mm;text-transform:uppercase;letter-spacing:0.06em}
 .skill-tags{display:flex;flex-wrap:wrap;gap:1.5mm}
@@ -749,21 +749,36 @@ def _styled_sidebar(
 ) -> str:
     candidate = candidate or CandidateProfile()
 
+    # Icon glyphs are emoji-class Unicode characters with the explicit emoji
+    # variation selector (U+FE0F) where needed so browsers / Qt WebEngine
+    # use the colour-emoji font instead of the monochrome text variant. We
+    # avoid plain letter abbreviations (`@`, `e`, `t`) here because they
+    # rendered as visually weak placeholder text on the dark sidebar and
+    # the user explicitly asked for proper icon glyphs in the contact
+    # block. Brand-specific marks (LinkedIn / GitHub) keep their two-
+    # letter abbreviations because there is no widely supported native
+    # icon glyph for those that scales reliably across browsers and PDF
+    # printers.
+    _ICON_LOCATION = "&#x1F4CD;"           # round pushpin
+    _ICON_EMAIL = "&#x2709;&#xFE0F;"        # envelope (forced emoji style)
+    _ICON_PHONE = "&#x1F4DE;"               # telephone receiver
+    _ICON_PORTFOLIO = "&#x1F517;"           # link symbol
+
     contact_lines: list[str] = []
     if candidate.location:
         location_text = _localise_location(candidate.location, lang)
         contact_lines.append(
-            f'<div class="contact-line"><span class="ic">@</span>'
+            f'<div class="contact-line"><span class="ic">{_ICON_LOCATION}</span>'
             f'<span>{_esc(location_text)}</span></div>'
         )
     if candidate.contact_email:
         contact_lines.append(
-            f'<div class="contact-line"><span class="ic">e</span>'
+            f'<div class="contact-line"><span class="ic">{_ICON_EMAIL}</span>'
             f'<span>{_esc(candidate.contact_email)}</span></div>'
         )
     if candidate.phone:
         contact_lines.append(
-            f'<div class="contact-line"><span class="ic">t</span>'
+            f'<div class="contact-line"><span class="ic">{_ICON_PHONE}</span>'
             f'<span>{_esc(candidate.phone)}</span></div>'
         )
     if not contact_lines and resume.contact_line:
@@ -790,7 +805,7 @@ def _styled_sidebar(
         )
     if pf:
         online_lines.append(
-            f'<div class="contact-line"><span class="ic">&#9658;</span>'
+            f'<div class="contact-line"><span class="ic">{_ICON_PORTFOLIO}</span>'
             f'<a href="{_esc(pf)}">{_esc(pf)}</a></div>'
         )
 

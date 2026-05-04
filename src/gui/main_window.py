@@ -102,6 +102,13 @@ class WorkflowState:
     #: :class:`SectionRemovalConfirmDialog` for the row to actually drop, so
     #: this map only feeds the *display* of why a row is in the dialog.
     ai_removal_reasons: dict[str, str] = field(default_factory=dict)
+    #: Profile entry ids the user already saw in the removal-confirm dialog
+    #: and explicitly chose to KEEP (left the checkbox unticked). Subsequent
+    #: runs filter these out before showing the dialog so the user is not
+    #: re-prompted about the same row over and over - they already answered
+    #: "keep" once. Reset by ``_reset_workflow_for_fresh_run`` so the
+    #: 'Re-ask clarifying questions' checkbox brings the dialog back.
+    kept_entry_ids: set[str] = field(default_factory=set)
 
 
 # ---------------------------------------------------------------------------
@@ -670,6 +677,9 @@ class MainWindow(QMainWindow):
         self._state.pending_questions = []
         self._state.excluded_entry_ids = set()
         self._state.ai_removal_reasons = {}
+        # Forget the rows the user previously chose to keep so the
+        # confirmation dialog asks again on the fresh run.
+        self._state.kept_entry_ids = set()
         # Reset docs_language so the OutputLanguageDialog defaults follow
         # the current UI language again instead of the previous run's
         # picked language.
@@ -941,7 +951,14 @@ class MainWindow(QMainWindow):
         """
         excluded_ids = set(self._state.excluded_entry_ids or set())
         ai_reasons = dict(self._state.ai_removal_reasons or {})
+        kept_ids = set(self._state.kept_entry_ids or set())
         review_ids = excluded_ids | set(ai_reasons.keys())
+        # Drop rows the user already explicitly chose to keep in an earlier
+        # round of the same workflow. Excluded rows still show up because
+        # their pre-checked default lets the user re-confirm "yes, skip"
+        # quickly; rows the user actively unticked stay invisible until the
+        # 'Re-ask clarifying questions' fresh-run reset.
+        review_ids -= (kept_ids - excluded_ids)
         if not review_ids:
             return True
 
@@ -1021,7 +1038,14 @@ class MainWindow(QMainWindow):
         # dialog. Untouched pre-checked rows stay in (the user accepted the
         # default), unticked rows the user previously skipped come back
         # into the resume by their explicit choice here.
-        self._state.excluded_entry_ids = dlg.remove_ids()
+        removed = dlg.remove_ids()
+        self._state.excluded_entry_ids = removed
+        # Remember rows the user explicitly chose to KEEP so the next run
+        # in the same workflow does not re-prompt about them. Excluded
+        # rows are intentionally NOT added to ``kept_entry_ids`` because
+        # they are not "kept" - the user actively decided to drop them.
+        shown_ids = {c.entry_id for c in candidates}
+        self._state.kept_entry_ids |= (shown_ids - removed)
         return True
 
     def _on_documents_done(self, result) -> None:
@@ -1120,7 +1144,16 @@ class MainWindow(QMainWindow):
         provider = self._provider
         current_resume = state.resume
         job = state.job
-        candidate = state.candidate
+        # Mirror the filtering applied at initial generation so the
+        # refine safety net never re-injects rows the user already
+        # excluded via the discrepancy questions or the section-removal
+        # dialog. Without this, ``ensure_experience_section`` would walk
+        # the FULL ``state.candidate`` and silently bring back e.g.
+        # 'IT Tester @ Trask Solutions' even when the user opted to drop
+        # it, undoing their decision on every refine pass.
+        candidate = filter_profile_entries(
+            state.candidate, state.excluded_entry_ids
+        )
         answers = state.answers
         evidence_items = list(state.evidence.items) if state.evidence else []
         docs_lang = state.docs_language or get_language()

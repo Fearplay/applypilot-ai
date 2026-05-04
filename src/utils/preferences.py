@@ -1,7 +1,9 @@
 """Tiny on-disk store for user preferences that should outlive a single run.
 
 Currently used to persist the chosen UI language so the menu choice is sticky
-across restarts even when ``.env`` does not pin ``APPLYPILOT_UI_LANGUAGE``.
+across restarts. Since we deliberately do not expose the UI language as an
+environment variable, this JSON file is the single source of truth for the
+UI locale across sessions.
 
 The file is JSON, lives at ``~/.applypilot/state.json`` and degrades silently
 if it cannot be read or written - the GUI must keep working in either case.

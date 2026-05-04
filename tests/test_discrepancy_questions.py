@@ -9,11 +9,28 @@ from src.models.candidate import (
 from src.services.profile_dedup import build_source_discrepancy_questions
 
 
-def _make_profile(*, experience=(), education=()) -> CandidateProfile:
+def _make_profile(
+    *,
+    experience=(),
+    education=(),
+    raw_cv_text: str = "irrelevant CV blob",
+    raw_linkedin_text: str = "irrelevant LinkedIn blob",
+) -> CandidateProfile:
+    """Produce a profile that LOOKS like both sources were provided.
+
+    The discrepancy questions are gated on ``_has_two_sources`` (Issue 1
+    fix - see ``profile_dedup.py``); without raw text on both sides the
+    builder returns an empty list. Tests that want to exercise the
+    per-entry filtering supply both raw blobs by default. Tests that want
+    to exercise the gating itself override one of the two arguments to
+    ``""``.
+    """
     return CandidateProfile(
         full_name="Test Candidate",
         experience=list(experience),
         education=list(education),
+        raw_cv_text=raw_cv_text,
+        raw_linkedin_text=raw_linkedin_text,
     )
 
 
@@ -142,3 +159,71 @@ def test_skips_entries_without_meaningful_label():
     questions = build_source_discrepancy_questions(profile)
     assert len(questions) == 1
     assert questions[0].id == "discrepancy:exp-real"
+
+
+# ---------------------------------------------------------------------------
+# Issue 1: do not ask "X is on your CV but not on LinkedIn" when the user
+# never provided LinkedIn (and vice versa). With one source the question
+# itself is meaningless: of course the entry is missing on the other side.
+# ---------------------------------------------------------------------------
+
+
+def test_no_linkedin_text_means_no_discrepancy_questions():
+    """User uploaded only a CV - the helper must stay silent."""
+    profile = _make_profile(
+        experience=[
+            WorkExperience(
+                id="exp-only-cv",
+                title="Vývojář Python",
+                company="CreatiWeb",
+                source="cv",
+            ),
+        ],
+        raw_linkedin_text="",
+    )
+
+    assert build_source_discrepancy_questions(profile) == []
+
+
+def test_no_cv_text_means_no_discrepancy_questions():
+    """Mirror of the previous test - LinkedIn-only profile."""
+    profile = _make_profile(
+        education=[
+            EducationEntry(
+                id="edu-only-li",
+                institution="ČZU v Praze",
+                source="linkedin",
+            ),
+        ],
+        raw_cv_text="",
+    )
+
+    assert build_source_discrepancy_questions(profile) == []
+
+
+def test_two_sources_inferred_from_entries_when_raw_text_missing():
+    """If both raw blobs are empty but at least one entry from each
+    source survived dedup, we still consider both sources "provided"
+    so the helper produces its usual mix of questions.
+    """
+    profile = _make_profile(
+        experience=[
+            WorkExperience(
+                id="exp-cv",
+                title="Engineer",
+                company="Acme CV",
+                source="cv",
+            ),
+            WorkExperience(
+                id="exp-li",
+                title="Engineer",
+                company="Acme LI",
+                source="linkedin",
+            ),
+        ],
+        raw_cv_text="",
+        raw_linkedin_text="",
+    )
+
+    questions = build_source_discrepancy_questions(profile)
+    assert {q.id for q in questions} == {"discrepancy:exp-cv", "discrepancy:exp-li"}

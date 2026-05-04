@@ -1027,6 +1027,36 @@ def _date_conflict_question(
     )
 
 
+def _has_two_sources(profile: CandidateProfile) -> bool:
+    """Return ``True`` when the candidate provided BOTH a CV and a LinkedIn
+    export so cross-source discrepancy questions are meaningful.
+
+    We treat a source as "provided" when EITHER its raw text blob is
+    non-empty OR at least one merged entry carries that source label
+    (``"linkedin"`` / ``"both"`` for LinkedIn, ``"cv"`` / ``"both"`` for
+    CV). The dual check covers the edge case where the AI loses a raw
+    text field on round-trip but still attributed entries to the
+    correct source.
+    """
+    has_cv_text = bool((profile.raw_cv_text or "").strip())
+    has_linkedin_text = bool((profile.raw_linkedin_text or "").strip())
+
+    has_cv_entry = False
+    has_linkedin_entry = False
+    for entry in (*profile.experience, *profile.education):
+        src = entry.source
+        if src in ("cv", "both"):
+            has_cv_entry = True
+        if src in ("linkedin", "both"):
+            has_linkedin_entry = True
+        if has_cv_entry and has_linkedin_entry:
+            break
+
+    has_cv = has_cv_text or has_cv_entry
+    has_linkedin = has_linkedin_text or has_linkedin_entry
+    return has_cv and has_linkedin
+
+
 def build_source_discrepancy_questions(
     profile: CandidateProfile,
     *,
@@ -1038,7 +1068,15 @@ def build_source_discrepancy_questions(
     map a 'No - skip it' answer back to the row that should be excluded
     before document generation. The format is ``discrepancy:<entry_id>``
     (e.g. ``discrepancy:exp-3``).
+
+    Returns an empty list when the user did NOT provide BOTH a CV and a
+    LinkedIn export. With only one source there is no real discrepancy
+    to surface - asking "X appears on your CV but not on LinkedIn" when
+    the user explicitly skipped LinkedIn would be hostile noise.
     """
+    if not _has_two_sources(profile):
+        return []
+
     questions: list[ClarifyingQuestion] = []
 
     for entry in profile.experience:

@@ -148,17 +148,15 @@ def load_settings(env_file: str | os.PathLike[str] | None = None) -> Settings:
 
 
 def _resolve_ui_language() -> str:
-    """Pick the UI language using env > saved preferences > default 'en'.
+    """Pick the UI language from saved preferences with English as the default.
 
-    Priority order matches user expectations: an explicit env override always
-    wins (useful in tests / CI), otherwise the menu choice persisted from a
-    previous session via :mod:`src.utils.preferences` is used, finally we
-    fall back to English so the GUI stays predictable on first launch.
+    The user's menu choice is persisted to ``~/.applypilot/state.json`` via
+    :mod:`src.utils.preferences` and is the single source of truth across
+    restarts. We deliberately do NOT honour an ``APPLYPILOT_UI_LANGUAGE``
+    environment override anymore: keeping the runtime menu choice as the
+    sole authority avoids the foot-gun where a stale ``.env`` value silently
+    reverts the UI language after every restart.
     """
-    raw = (os.getenv("APPLYPILOT_UI_LANGUAGE") or "").strip().lower()
-    if raw in {"en", "cs"}:
-        return raw
-
     try:
         # Imported lazily to avoid pulling utils into a possible bootstrap
         # path that runs before utils/__init__ exists.

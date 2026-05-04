@@ -19,8 +19,10 @@ from ..models.job import JobPosting
 from ..models.match import AnswersBundle
 from .profile_dedup import (
     _extract_seniority,
+    _names_match,
     _normalize_name,
     _parse_year_range,
+    _ranges_overlap,
     _strip_diacritics,
     _strip_seniority,
 )
@@ -133,6 +135,15 @@ _EXPERIENCE_TRANSLATIONS_CS: dict[str, str] = {
     "part-time": "Částečný úvazek",
     "full-time": "Plný úvazek",
     "self-employed": "OSVČ",
+    # Mid-sentence English noise that the AI sometimes leaves inside an
+    # otherwise Czech bullet / summary ("a acting QA Lead s 4 lety
+    # zkušeností"). Mapped to the closest Czech equivalent so the
+    # deterministic post-processing pass doesn't have to call out to
+    # another model. ``\b``-anchored matching (in
+    # :func:`_translate_text_diacritics_insensitive`) keeps these from
+    # mis-translating compound English titles like "Tech Lead".
+    "acting": "pověřený",
+    "interim": "dočasně pověřený",
 }
 
 # Months and "present" markers used inside the period field. Mapping spans
@@ -199,6 +210,28 @@ def _looks_english(text: str) -> bool:
     if has_diacritics:
         return False
     return bool(_EN_EDU_MARKERS_RE.search(text))
+
+
+def _contains_translation_keys(text: str, table: dict[str, str]) -> bool:
+    """Return ``True`` if ``text`` contains any whole-word key from ``table``.
+
+    Used to gate the bullet/summary scrubbing pass: a mostly-Czech bullet
+    that happens to have one English word in it (``"a acting QA Lead"``)
+    can NOT be detected via :func:`_looks_english` (the bullet is
+    diacritics-heavy), but it DOES contain one of the table keys, so we
+    use the table itself as the trigger. Keeps the scrub conservative -
+    we only touch text we already know how to translate.
+    """
+    if not text:
+        return False
+    ascii_lower = _strip_diacritics(text).lower()
+    for src in table:
+        if not src:
+            continue
+        pattern = re.compile(rf"\b{re.escape(src)}\b")
+        if pattern.search(ascii_lower):
+            return True
+    return False
 
 
 def _looks_czech(text: str) -> bool:
@@ -375,6 +408,25 @@ def _fixup_education_language(resume: TailoredResume, output_language: str) -> N
                     section.subtitle, _EXPERIENCE_TRANSLATIONS_CS
                 )
             section.period = _translate_period(section.period, "cs")
+            # Bullets are normally Czech but the AI sometimes leaves
+            # an English noise word ("Acting QA Lead v týmu...") that
+            # :func:`_looks_english` can't catch (the diacritics in
+            # the rest of the bullet defeat the heuristic). Detect via
+            # the translation table itself: if any of our known keys is
+            # present, run the substitution pass.
+            for bullet in section.bullets:
+                if _contains_translation_keys(bullet.text, _EXPERIENCE_TRANSLATIONS_CS):
+                    bullet.text = _translate_text_diacritics_insensitive(
+                        bullet.text, _EXPERIENCE_TRANSLATIONS_CS
+                    )
+        # Same trick for the professional summary so "Software QA
+        # Engineer a acting QA Lead" doesn't survive in a CZ resume.
+        if resume.professional_summary and _contains_translation_keys(
+            resume.professional_summary, _EXPERIENCE_TRANSLATIONS_CS
+        ):
+            resume.professional_summary = _translate_text_diacritics_insensitive(
+                resume.professional_summary, _EXPERIENCE_TRANSLATIONS_CS
+            )
         return
 
     if code == "en":
@@ -399,6 +451,13 @@ def _fixup_education_language(resume: TailoredResume, output_language: str) -> N
                     section.subtitle, _EXPERIENCE_TRANSLATIONS_EN
                 )
             section.period = _translate_period(section.period, "en")
+            # Symmetric bullet-level scrub for the EN direction so an
+            # otherwise English bullet doesn't carry "Stáž v ..." inside.
+            for bullet in section.bullets:
+                if _contains_translation_keys(bullet.text, _EXPERIENCE_TRANSLATIONS_EN):
+                    bullet.text = _translate_text_diacritics_insensitive(
+                        bullet.text, _EXPERIENCE_TRANSLATIONS_EN
+                    )
         # Project subtitles often carry stack info ("Vývojář Python | ...").
         for section in resume.projects:
             if section.title and _looks_czech(section.title):
@@ -409,6 +468,14 @@ def _fixup_education_language(resume: TailoredResume, output_language: str) -> N
                 section.subtitle = _translate_text_diacritics_insensitive(
                     section.subtitle, _EXPERIENCE_TRANSLATIONS_EN
                 )
+        # And the EN summary - mirror the CS scrub so ``"I worked as a
+        # Vývojář Python"`` collapses to plain English.
+        if resume.professional_summary and _contains_translation_keys(
+            resume.professional_summary, _EXPERIENCE_TRANSLATIONS_EN
+        ):
+            resume.professional_summary = _translate_text_diacritics_insensitive(
+                resume.professional_summary, _EXPERIENCE_TRANSLATIONS_EN
+            )
 
 # ---------------------------------------------------------------------------
 # Career-progression helpers live in `profile_dedup.py` (single source of
@@ -606,6 +673,63 @@ def _dedup_bullets(bullets: list[ResumeBullet]) -> list[ResumeBullet]:
     return out
 
 
+# Employment-type tokens that float around inside resume subtitles (e.g.
+# "CreatiWeb · AppYours · IBM · Internship") and would otherwise wedge a
+# duplicate entry through the dedup key. Stripped during normalisation -
+# *not* during display - so two entries differing only by an "Internship"
+# suffix collapse to one row in the rendered resume. Lowercase ASCII keys;
+# matching is diacritics-insensitive.
+_EMPLOYMENT_TYPE_DEDUP_TOKENS: frozenset[str] = frozenset({
+    "internship",
+    "stage",
+    "staz",
+    "staze",
+    "stazista",
+    "stazistka",
+    "intern",
+    "trainee",
+    "contract",
+    "contractor",
+    "kontrakt",
+    "kontraktor",
+    "freelance",
+    "freelancer",
+    "osvc",
+    "self_employed",
+    "selfemployed",
+    "part",
+    "parttime",
+    "parttimer",
+    "full",
+    "fulltime",
+    "castecny",
+    "castecnaprace",
+    "uvazek",
+    "plny",
+    "temporary",
+    "temporarily",
+    "docasny",
+    "docasna",
+    "brigada",
+    "brigadnik",
+})
+
+
+def _normalize_section_subtitle(text: str) -> str:
+    """Like :func:`_normalize_name` but additionally drops employment-type
+    tokens so "CreatiWeb · AppYours · IBM · Internship" and
+    "CreatiWeb - AppYours - IBM" produce the same canonical form.
+    """
+    base = _normalize_name(text)
+    if not base:
+        return ""
+    tokens = [
+        tok for tok in base.split()
+        if tok and tok not in _EMPLOYMENT_TYPE_DEDUP_TOKENS
+    ]
+    return " ".join(tokens)
+
+
 def _experience_dedup_key(section: ResumeSection) -> tuple[str, str, tuple[int, int] | None]:
     """Stable key used to identify duplicate experience rows.
 
@@ -614,13 +738,68 @@ def _experience_dedup_key(section: ResumeSection) -> tuple[str, str, tuple[int, 
     duplicate signal; falls back to a normalised title when the AI omitted
     the subtitle. The year range is parsed loosely so '06/2023 - 07/2025'
     and 'června 2023 - července 2025' produce the same key.
+
+    Employment-type suffixes ('Internship', 'Stáž', 'Contract', ...) are
+    stripped from the subtitle before normalising so e.g. "CreatiWeb -
+    AppYours - IBM - Internship" and "CreatiWeb · AppYours · IBM" share
+    the same key. Without this strip, a single role described once as
+    "Internship" and once without the label would survive dedup as two
+    siblings.
     """
     title = section.title or ""
     subtitle = section.subtitle or ""
     seniority = _extract_seniority(title)
     name_basis = subtitle or title
-    norm = _normalize_name(name_basis)
+    norm = _normalize_section_subtitle(name_basis)
     return seniority, norm, _parse_year_range(section.period or "")
+
+
+def _section_norms(section: ResumeSection) -> tuple[str, str]:
+    """Return ``(normalised_title, normalised_subtitle)`` for fuzzy matching.
+
+    Uses :func:`_normalize_section_subtitle` on both fields so the same
+    employment-type stripping that protects :func:`_experience_dedup_key`
+    also protects the substring/overlap fallback in
+    :func:`_experience_sections_match`.
+    """
+    return (
+        _normalize_section_subtitle(section.title or ""),
+        _normalize_section_subtitle(section.subtitle or ""),
+    )
+
+
+def _experience_sections_match(a: ResumeSection, b: ResumeSection) -> bool:
+    """Return ``True`` when ``a`` and ``b`` describe the same role.
+
+    Tighter than tuple equality: two sections match when they share the
+    same seniority prefix, their year ranges overlap, AND either their
+    normalised titles OR their normalised subtitles match via the
+    substring / token-overlap heuristic in :func:`_names_match`.
+
+    The double-OR is what catches the "Developer (Python · Chatbot ·
+    Game dev)" case where two AI-emitted variants (one English, one
+    Czech) carry slightly different separators and an extra "Internship"
+    suffix - they share the same title and almost the same subtitle, so
+    either path resolves them as the same role. Without this, the
+    section dedup compared exact tuple keys and silently kept both
+    twins.
+    """
+    sen_a = _extract_seniority(a.title or "")
+    sen_b = _extract_seniority(b.title or "")
+    if sen_a != sen_b:
+        return False
+    range_a = _parse_year_range(a.period or "")
+    range_b = _parse_year_range(b.period or "")
+    if range_a is not None and range_b is not None:
+        if not _ranges_overlap(range_a, range_b):
+            return False
+    title_a, sub_a = _section_norms(a)
+    title_b, sub_b = _section_norms(b)
+    if title_a and title_b and _names_match(title_a, title_b):
+        return True
+    if sub_a and sub_b and _names_match(sub_a, sub_b):
+        return True
+    return False
 
 
 def _merge_experience_sections(
@@ -652,7 +831,14 @@ def _dedup_resume_sections(resume: TailoredResume) -> None:
     NEVER merged even when the company + period match - they're real
     career progression entries that must stay separate.
     """
-    # Experience: greedy O(n^2) merge by dedup key, preserving order.
+    # Experience: greedy O(n^2) merge with a two-tier match.
+    # 1) Exact dedup-key equality is the cheap fast-path that catches the
+    #    common case where the AI emitted two truly identical rows.
+    # 2) The fuzzy fallback - :func:`_experience_sections_match` - catches
+    #    cross-language twins where one row carries an extra employment-
+    #    type suffix like "Internship" or uses different separator
+    #    characters (·, -, |). Without this fallback, the post-AI dedup
+    #    silently kept both copies side by side in the rendered resume.
     new_experience: list[ResumeSection] = []
     for section in resume.experience:
         section.bullets = _dedup_bullets(section.bullets)
@@ -660,6 +846,10 @@ def _dedup_resume_sections(resume: TailoredResume) -> None:
         merged = False
         for i, existing in enumerate(new_experience):
             if _experience_dedup_key(existing) == key:
+                new_experience[i] = _merge_experience_sections(existing, section)
+                merged = True
+                break
+            if _experience_sections_match(existing, section):
                 new_experience[i] = _merge_experience_sections(existing, section)
                 merged = True
                 break
@@ -776,20 +966,50 @@ def _find_experience_match(resume: TailoredResume, entry) -> bool:
     return False
 
 
+def _candidate_entry_key(entry) -> tuple[str, str, tuple[int, int] | None]:
+    """Return the same canonical key shape used for resume sections.
+
+    Lets callers compare a :class:`WorkExperience` (candidate side) against
+    a :class:`ResumeSection` (output side) without having to materialise a
+    fake ``ResumeSection`` first.
+    """
+    title = entry.title or ""
+    company = entry.company or ""
+    seniority = _extract_seniority(title)
+    name_basis = company or title
+    norm = _normalize_section_subtitle(name_basis)
+    return seniority, norm, _parse_year_range(entry.period or "")
+
+
 def _compute_missing_experience(
-    resume: TailoredResume, candidate: CandidateProfile
+    resume: TailoredResume,
+    candidate: CandidateProfile,
+    *,
+    skip_keys: set[tuple[str, str, tuple[int, int] | None]] | None = None,
 ) -> list[ResumeSection]:
     """Return the candidate experience rows that are NOT yet in ``resume``.
 
     Pure function: never mutates either argument. Callers (e.g. the
     refine safety net) need this to know what they're about to inject so
     they can tell the user about it.
+
+    ``skip_keys`` is the optional set of canonical experience keys
+    (produced by :func:`_experience_dedup_key` on a section or
+    :func:`_candidate_entry_key` on a candidate row) that should NEVER be
+    re-injected even when the AI dropped them. The refine flow uses this
+    to honour an explicit "smaž / delete" instruction without losing the
+    rest of the safety net's protection on accidentally-dropped rows.
     """
     if not candidate.experience:
         return []
+    skip_keys = skip_keys or set()
     missing: list[ResumeSection] = []
     for entry in candidate.experience:
         if _find_experience_match(resume, entry):
+            continue
+        if _candidate_entry_key(entry) in skip_keys:
+            # User explicitly asked to delete this row in the refine
+            # feedback - respect their decision instead of re-adding it.
             continue
         subtitle_bits: list[str] = []
         if entry.company:
@@ -807,14 +1027,20 @@ def ensure_experience_section(
     resume: TailoredResume,
     candidate: CandidateProfile,
     output_language: str = "en",
+    *,
+    skip_keys: set[tuple[str, str, tuple[int, int] | None]] | None = None,
 ) -> TailoredResume:
     """Re-inject any candidate experience rows the AI silently dropped.
 
     Uses seniority-aware matching so "Junior Software QA Engineer" is NOT
     considered a match for "Software QA Engineer" -- career progression
     entries are treated as distinct rows.
+
+    ``skip_keys`` is forwarded to :func:`_compute_missing_experience` so
+    the refine flow can keep rows the user explicitly asked to delete
+    from sneaking back in.
     """
-    missing = _compute_missing_experience(resume, candidate)
+    missing = _compute_missing_experience(resume, candidate, skip_keys=skip_keys)
     if missing:
         logger.warning(
             "ensure_experience_section: re-injected %d experience rows the AI dropped: %s",
@@ -913,6 +1139,24 @@ _REFINE_ADD_INTENT_KEYWORDS: tuple[str, ...] = (
     "doplnit", "doplň", "doplnil",
 )
 
+# Words that signal the user wants something REMOVED from the resume. When
+# any of these appear in the feedback, the safety net stops re-injecting
+# experience rows the AI deliberately dropped between the current and the
+# refined resume - otherwise "smaž tu pozici" would be silently undone by
+# :func:`ensure_experience_section`.
+_REFINE_DELETE_INTENT_KEYWORDS: tuple[str, ...] = (
+    # English
+    "delete", "remove", "drop", "kick out", "take out", "get rid",
+    "exclude", "omit", "strike", "scrap",
+    # Czech (with and without diacritics, several inflected forms)
+    "smaz", "smaž", "smazat", "smazal", "smazala", "smazals", "smazalas",
+    "odstran", "odstraň", "odstranit", "odstranil", "odstranila",
+    "odeber", "odebrat", "odebral", "odebrala",
+    "vymaz", "vymaž", "vymazat", "vymazal", "vymazala",
+    "zrus", "zruš", "zrušit", "zrusil", "zrušil", "zrusila", "zrušila",
+    "vyradit", "vyřadit", "vyradil", "vyřadil",
+)
+
 
 def _feedback_has_add_intent(feedback: str) -> bool:
     """Return True when ``feedback`` contains an "ADD this row" keyword."""
@@ -921,6 +1165,47 @@ def _feedback_has_add_intent(feedback: str) -> bool:
         _strip_diacritics(kw.lower()) in text
         for kw in _REFINE_ADD_INTENT_KEYWORDS
     )
+
+
+def _feedback_has_delete_intent(feedback: str) -> bool:
+    """Return True when ``feedback`` contains a "REMOVE this row" keyword.
+
+    Used by the refine flow to decide whether the experience safety net
+    should keep its hands off rows the AI intentionally dropped. We
+    intentionally use whole-string substring matching (after diacritic
+    stripping) instead of token-bounded regexes so e.g. "smazal" inside a
+    longer Czech sentence still matches via the "smaz" prefix.
+    """
+    text = _strip_diacritics((feedback or "").lower())
+    return any(
+        _strip_diacritics(kw.lower()) in text
+        for kw in _REFINE_DELETE_INTENT_KEYWORDS
+    )
+
+
+def _intentionally_dropped_experience(
+    current_resume: TailoredResume,
+    refined_resume: TailoredResume,
+) -> set[tuple[str, str, tuple[int, int] | None]]:
+    """Return canonical keys for experience rows the AI removed in refine.
+
+    Compares the resume the user looked at when typing the feedback
+    against the resume the AI just produced. Any key present in
+    ``current_resume`` but absent from ``refined_resume`` is treated as
+    an intentional deletion - the refine flow then asks the safety net
+    to leave those keys alone instead of re-injecting them from the
+    candidate profile (the user said 'smaž' / 'delete', so honouring
+    that decision matters).
+    """
+    refined_keys: set[tuple[str, str, tuple[int, int] | None]] = {
+        _experience_dedup_key(s) for s in refined_resume.experience
+    }
+    dropped: set[tuple[str, str, tuple[int, int] | None]] = set()
+    for s in current_resume.experience:
+        key = _experience_dedup_key(s)
+        if key not in refined_keys:
+            dropped.add(key)
+    return dropped
 
 
 def _format_safety_net_addition(section: ResumeSection) -> str:
@@ -963,10 +1248,21 @@ def refine_tailored_resume(
     _dedup_resume_sections(resume)
     _enforce_bullet_floor(resume, candidate)
 
+    # When the user explicitly asks to delete a position ('smaž', 'remove',
+    # 'odeber', ...), we MUST stop the experience safety net from
+    # silently re-injecting rows the AI just dropped on the user's
+    # behalf. ``skip_keys`` carries the canonical keys of rows the AI
+    # removed in this refine pass so :func:`_compute_missing_experience`
+    # leaves them alone. Without this guard, "Refine with AI: smaž
+    # pozici X" produced a resume identical to the previous draft.
+    skip_keys: set[tuple[str, str, tuple[int, int] | None]] = set()
+    if _feedback_has_delete_intent(feedback):
+        skip_keys = _intentionally_dropped_experience(current_resume, resume)
+
     # Capture missing experience rows BEFORE we inject them so we can tell
     # the user (in their language) which rows the safety net rescued.
-    missing_before = _compute_missing_experience(resume, candidate)
-    ensure_experience_section(resume, candidate, output_language)
+    missing_before = _compute_missing_experience(resume, candidate, skip_keys=skip_keys)
+    ensure_experience_section(resume, candidate, output_language, skip_keys=skip_keys)
     dropped_projects = _strip_invented_projects(resume, candidate)
     _backfill_periods(resume, candidate)
     ensure_projects_section(resume, candidate)
