@@ -133,6 +133,7 @@ class BaseAIProvider(ABC):
         answers: AnswersBundle,
         evidence: Sequence[EvidenceItem] = (),
         output_language: str = "en",
+        previous_explanation: str = "",
     ) -> RefinedResume:
         """Re-generate the resume incorporating the user's feedback.
 
@@ -140,6 +141,14 @@ class BaseAIProvider(ABC):
         :class:`TailoredResume` and a 1-3 sentence ``explanation`` (in
         the target ``output_language``) the GUI shows inline so the user
         understands what changed and why.
+
+        ``previous_explanation`` is the explanation field returned by the
+        LAST refine round (empty on the first round). The model uses it
+        to interpret short affirmative replies ('ano', 'yes', 'ok') as
+        agreement with the suggestion it made in that previous note -
+        without this context, the AI would treat the bare 'ano' as a
+        no-op and frustrate the user who is clearly responding to a
+        question.
         """
 
 

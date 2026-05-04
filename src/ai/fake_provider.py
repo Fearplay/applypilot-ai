@@ -847,6 +847,7 @@ class FakeAIProvider(BaseAIProvider):
         answers: AnswersBundle,
         evidence: Sequence[EvidenceItem] = (),
         output_language: str = "en",
+        previous_explanation: str = "",
     ) -> RefinedResume:
         note = f"[Demo] User feedback received: {feedback[:200]}"
         current_resume.professional_summary = (

@@ -109,6 +109,14 @@ class WorkflowState:
     #: "keep" once. Reset by ``_reset_workflow_for_fresh_run`` so the
     #: 'Re-ask clarifying questions' checkbox brings the dialog back.
     kept_entry_ids: set[str] = field(default_factory=set)
+    #: The ``explanation`` string the AI returned in the previous refine
+    #: round. Threaded into the next refine call so the model can
+    #: interpret short affirmations ('ano', 'yes') as agreement with the
+    #: suggestion it made earlier - without this context, a bare 'ano'
+    #: arrives at the AI as a no-op feedback. Reset whenever the resume
+    #: is regenerated from scratch (new package) so the previous round's
+    #: context never bleeds into a different analysis.
+    last_refine_explanation: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -684,6 +692,10 @@ class MainWindow(QMainWindow):
         # the current UI language again instead of the previous run's
         # picked language.
         self._state.docs_language = get_language()
+        # Wipe the previous round's refine context so a fresh analysis
+        # never inherits an 'ano' continuation that belongs to the
+        # earlier resume.
+        self._state.last_refine_explanation = ""
 
     def _on_profile_built(self, profile: CandidateProfile) -> None:
         self._state.candidate = profile
@@ -1054,6 +1066,10 @@ class MainWindow(QMainWindow):
         self._state.cover_letter = cover
         self._state.interview = interview
         self._state.gaps = gaps
+        # The freshly generated resume has no prior refine context. Reset
+        # the carry-over so the very next refine round sees an empty
+        # ``previous_explanation`` (the AI never made a suggestion yet).
+        self._state.last_refine_explanation = ""
         package = GeneratedApplicationPackage(
             job_posting=self._state.job,  # type: ignore[arg-type]
             candidate_profile=self._state.candidate,  # type: ignore[arg-type]
@@ -1157,6 +1173,13 @@ class MainWindow(QMainWindow):
         answers = state.answers
         evidence_items = list(state.evidence.items) if state.evidence else []
         docs_lang = state.docs_language or get_language()
+        # Capture the AI's previous explanation so the refine prompt can
+        # interpret a bare 'ano' / 'yes' as agreement with the suggestion
+        # the model made in that note. The state field is updated AFTER
+        # ``on_done`` so the same value is used by exactly one round and
+        # the next round's "previous" is always the explanation the user
+        # actually saw in the GUI before typing.
+        previous_explanation = state.last_refine_explanation
 
         self._docs_page.set_status(t("docs.refine.status"))
         self.statusBar().showMessage(t("docs.refine.status"))
@@ -1166,6 +1189,7 @@ class MainWindow(QMainWindow):
                 provider, current_resume, feedback,
                 job, candidate, answers, evidence_items,
                 output_language=docs_lang,
+                previous_explanation=previous_explanation,
             )
 
         def on_done(refined):
@@ -1175,6 +1199,7 @@ class MainWindow(QMainWindow):
             # changed without opening the modern preview.
             updated_resume = refined.resume
             state.resume = updated_resume
+            state.last_refine_explanation = (refined.explanation or "").strip()
             if state.package:
                 state.package.tailored_resume = updated_resume
                 self._docs_page.load_package(state.package)

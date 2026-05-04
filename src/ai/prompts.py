@@ -529,9 +529,27 @@ def resume_user_prompt(
     evidence: list[EvidenceItem],
     output_language: str = "en",
 ) -> str:
+    has_linkedin = bool((candidate.raw_linkedin_text or "").strip())
+    linkedin_block = (
+        ""
+        if has_linkedin
+        else (
+            "LINKEDIN ABSENCE (HARD RULE):\n"
+            "- The candidate did NOT supply a LinkedIn export. "
+            "``CANDIDATE.raw_linkedin_text`` is empty AND no entry has "
+            "``source='linkedin'`` or ``'both'``. You MUST NOT mention "
+            "LinkedIn anywhere in the resume - not in the contact line "
+            "(unless `linkedin` field below is non-null), not in any "
+            "bullet, not in the summary. Do NOT invent claims like "
+            "'verified on LinkedIn'. The only biographical sources "
+            "available are the CV text, GitHub data, and clarifying "
+            "answers - reason from those alone.\n\n"
+        )
+    )
     return (
         "Produce a TailoredResume in the schema. Tailor it to the job:\n"
-        "- Reorder skills so the most relevant for the job are first.\n"
+        + linkedin_block
+        + "- Reorder skills so the most relevant for the job are first.\n"
         "- Rewrite bullet points to use ATS keywords from the job - but ONLY "
         "if they reflect actual evidence (CV / LinkedIn / GitHub / user "
         "answers marked 'practical_experience'). Treat 'learning_in_progress' "
@@ -567,6 +585,29 @@ def resume_user_prompt(
         "(e.g. just a title and a company because that is all the CV had), "
         "leave the bullet list empty too. Do NOT invent generic responsibilities "
         "just to make the section look fuller.\n"
+        "- ONE LANGUAGE PER BULLET LIST (HARD RULE): every bullet in a "
+        "single ResumeSection.bullets list MUST be written in "
+        "OUTPUT_LANGUAGE. Never emit a Czech bullet next to its English "
+        "twin in the same section ('\u0160koln\u00ed st\u00e1\u017ee zam\u011b\u0159en\u00e9 "
+        "na Python game development...' followed by 'School internships' / "
+        "'Python game development' / 'IBM Watson chatbot in a 2-person "
+        "team') - that is a duplicate, not extra detail. Pick the "
+        "OUTPUT_LANGUAGE wording, drop the other-language twin entirely.\n"
+        "EDUCATION (HARD RULE - INSTITUTION REQUIRED):\n"
+        "- Every emitted ResumeSection in `education` MUST have a "
+        "non-empty `subtitle` (the institution name, e.g. 'Czech "
+        "University of Life Sciences Prague' / 'Provozn\u011b ekonomick\u00e1 "
+        "fakulta \u010cZU v Praze'). NEVER emit an education row with only "
+        "a field of study and no school - 'Informatika studies', "
+        "'Computer Science studies', 'Bachelor of X' on its own with no "
+        "subtitle is a broken row that hurts the resume more than it "
+        "helps. If the candidate input lists a degree but the "
+        "institution is unknown / empty, OMIT that education row "
+        "entirely. The user can add it later via Refine with AI.\n"
+        "- Do NOT pad the title with the word 'studies' / 'studium' "
+        "when the field of study is already a noun phrase. 'Informatika' "
+        "alone is a perfect title; 'Informatika studies' is broken "
+        "Czech-English code-mix.\n"
         "DEDUPLICATION:\n"
         "- Treat two experience entries with the same company and overlapping "
         "dates as the SAME role - emit ONE TailoredResume.experience item. "
@@ -782,7 +823,49 @@ def refine_resume_user_prompt(
     answers: AnswersBundle,
     evidence: list[EvidenceItem],
     output_language: str = "en",
+    previous_explanation: str = "",
 ) -> str:
+    has_linkedin = bool((candidate.raw_linkedin_text or "").strip())
+    linkedin_block = (
+        ""
+        if has_linkedin
+        else (
+            "LINKEDIN ABSENCE (HARD RULE):\n"
+            "- The candidate did NOT supply a LinkedIn export for this "
+            "session. ``CANDIDATE.raw_linkedin_text`` is empty AND no "
+            "experience / education entry has ``source='linkedin'`` or "
+            "``'both'``. Therefore you MUST NOT reference LinkedIn anywhere "
+            "in your output - not in `explanation`, not in any bullet, not "
+            "in `professional_summary`. Do NOT say 'LinkedIn does not "
+            "list X', 'add this to your LinkedIn', 'check your LinkedIn', "
+            "'na LinkedInu nemáš X', 'dopl\u0148 to na LinkedIn'. The only "
+            "biographical sources available are the CV text, GitHub data, "
+            "and the user's clarifying answers - reason from those alone.\n\n"
+        )
+    )
+    prev_explanation_block = ""
+    if previous_explanation.strip():
+        prev_explanation_block = (
+            "PREVIOUS_AI_EXPLANATION (the note YOU wrote in the last refine "
+            "round, shown for context):\n"
+            f"{previous_explanation.strip()}\n\n"
+            "AFFIRMATION INTERPRETATION (HARD RULE):\n"
+            "- If the user's current FEEDBACK is a short affirmation ('yes', "
+            "'ano', 'jo', 'ok', 'okay', 'sure', 'go ahead', 'do it', "
+            "'klidn\u011b', 'jasn\u011b', 'proved\u2019', 'sma\u017e to', "
+            "'odstra\u0148 to', 'jdi do toho') WITHOUT any other concrete "
+            "instructions, treat it as the user AGREEING with the SUGGESTION "
+            "you made in PREVIOUS_AI_EXPLANATION above. If your previous "
+            "explanation included a question like 'Mohu sma\u017eat X?' / "
+            "'Should I delete X?' / 'Chce\u0161 to odstranit?' / 'Doplnit Y?', "
+            "perform that exact action now (delete X, add Y, etc.). Be "
+            "decisive: the user already answered. Do NOT just acknowledge - "
+            "actually mutate the resume to reflect the action you proposed.\n"
+            "- If the affirmation is paired with a more specific instruction "
+            "(e.g. 'Ano, sma\u017e tu pozici Junior Developer'), the specific "
+            "instruction wins and you do not need to re-derive the action "
+            "from PREVIOUS_AI_EXPLANATION.\n\n"
+        )
     return (
         "The user has reviewed the current tailored resume and provided "
         "feedback describing what is wrong or missing. Your task is to "
@@ -800,7 +883,46 @@ def refine_resume_user_prompt(
         "Engineer @ Avast Software (04/2022 - 06/2023) jsem v původním "
         "návrhu vynechal, protože jsem ji omylem sloučil s pozdější rolí "
         "v Gen Digital. Nyní ji doplňuji jako samostatný řádek.'\n\n"
-        "FEEDBACK INTERPRETATION (HARD RULE):\n"
+        "USER IS AUTHORITATIVE (HARD RULE - HIGHEST PRIORITY):\n"
+        "- The user is the FINAL AUTHORITY over their own resume. When "
+        "their feedback contradicts the original CV / LinkedIn / candidate "
+        "data, the user wins. They know their own life better than the "
+        "input documents do. If they say 'change German A2 to B2', do "
+        "exactly that - do not preserve A2 because the original input "
+        "said A2. If they say 'rename position X to Y', use Y. If they "
+        "say 'school is XYZ University', set it to XYZ University.\n"
+        "- DIRECT TEXT REPLACEMENT: when the user explicitly asks to "
+        "change one specific phrase to another (English: 'change \"A\" "
+        "to \"B\"', 'replace \"A\" with \"B\"', 'rename \"A\" to \"B\"'; "
+        "Czech: 'zm\u011b\u0148 \"A\" na \"B\"', 'p\u0159epi\u0161 \"A\" "
+        "na \"B\"', 'dej tam \"B\" m\u00edsto \"A\"', 'p\u0159elo\u017e "
+        "\"A\" na \"B\"'), perform that EXACT substitution wherever 'A' "
+        "appears in the resume (bullets, summary, subtitle, title - "
+        "everywhere). Do NOT preserve the original wording for "
+        "'canonicalization', 'technical terminology' or 'consistency' "
+        "reasons - the user explicitly asked for the change. Example: "
+        "user says 'p\u0159elo\u017e Java backend development na Java "
+        "backend v\u00fdvoj' -> every occurrence of 'Java backend "
+        "development' in the resume becomes 'Java backend v\u00fdvoj'. "
+        "The general 'product / brand names stay canonical' policy from "
+        "the resume prompt is OVERRIDDEN by an explicit user instruction.\n"
+        "- LANGUAGE LEVEL CHANGES: when the user says 'n\u011bm\u010dina "
+        "A2 m\u00e1 b\u00fdt B2', 'angli\u010dtina C1 ne C2', 'change "
+        "French to B1', update the relevant entry in `spoken_languages` "
+        "to the requested CEFR level. The CEFR-only rule still applies "
+        "to the format ('B2', not 'Professional Working'), but the "
+        "level itself is whatever the user said.\n"
+        "- FACT CORRECTIONS: when the user corrects a date, school name, "
+        "company, location, or any other piece of data, accept it. The "
+        "candidate profile is just our best parse of imperfect inputs - "
+        "the user's correction overrides it.\n"
+        "- DELETION CONFIRMATIONS: when the user agrees to a deletion "
+        "you previously suggested (see AFFIRMATION INTERPRETATION below), "
+        "actually drop the row. Don't just say 'I would drop X' and leave "
+        "X in the resume.\n\n"
+        + prev_explanation_block
+        + linkedin_block
+        + "FEEDBACK INTERPRETATION (HARD RULE):\n"
         "- The feedback may be ONE sentence OR a numbered list ('1) ...\\n"
         "2) ...\\n3) ...'). When you see a numbered list, treat each item "
         "as a SEPARATE actionable request and address them ALL in the "

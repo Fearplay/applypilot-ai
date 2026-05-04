@@ -404,11 +404,13 @@ class OpenAICompatibleProvider(BaseAIProvider):
         answers: AnswersBundle,
         evidence: Sequence[EvidenceItem] = (),
         output_language: str = "en",
+        previous_explanation: str = "",
     ) -> RefinedResume:
         system = prompts.system_prompt_for(job.role_type)
         user = prompts.refine_resume_user_prompt(
             current_resume, feedback, job, candidate, answers,
             list(evidence), output_language,
+            previous_explanation=previous_explanation,
         )
         return self._run("refine_resume", system, user, RefinedResume)
 

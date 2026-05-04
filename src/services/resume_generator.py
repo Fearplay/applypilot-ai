@@ -822,7 +822,190 @@ def _merge_experience_sections(
     })
 
 
-def _dedup_resume_sections(resume: TailoredResume) -> None:
+_CZECH_BULLET_KEYWORDS: tuple[str, ...] = (
+    "skolni", "stage", "staze", "stazi", "stazista", "vyvoj",
+    "tymu", "tym", "clenny", "clennem", "nasazeny", "nasazena",
+    "produkce", "vyvojar", "spravoval", "spravoval", "prace",
+    "pracoval", "pracovala", "vedl", "vedla", "absolvoval",
+    "absolvovala", "vytvoril", "vytvorila", "navrhl", "navrhla",
+    "implementoval", "implementovala", "testoval", "testovala",
+)
+
+
+def _bullet_language_signal(text: str) -> str:
+    """Best-effort 'cs' / 'en' / '' classifier for a single bullet.
+
+    Used by :func:`_dedup_cross_language_bullets` to decide which twin
+    of a near-duplicate pair should win when the user picked an
+    OUTPUT_LANGUAGE. Returns ``''`` when neither side has a clear
+    signal so the caller can fall back to insertion order rather than
+    guessing.
+    """
+    if not text:
+        return ""
+    if any(c in _CZECH_DIACRITICS_SET for c in text):
+        return "cs"
+    ascii_lower = _strip_diacritics(text).lower()
+    tokens = set(re.findall(r"[a-z]+", ascii_lower))
+    if any(kw in tokens for kw in _CZECH_BULLET_KEYWORDS):
+        return "cs"
+    if _EN_EDU_MARKERS_RE.search(text):
+        return "en"
+    # Token-overlap fallback: a bullet stuffed with stop-words like
+    # "the", "in", "for", "with" is almost certainly English. We don't
+    # bother with a heavy NLP check because the dedup is conservative -
+    # if both sides are flagged as 'en' or both as 'cs', no replacement
+    # happens and both bullets survive untouched.
+    en_stopwords = {
+        "the", "and", "for", "with", "to", "of", "in", "on",
+        "an", "as", "by", "at", "from", "into", "team", "person",
+    }
+    if tokens & en_stopwords:
+        return "en"
+    return ""
+
+
+def _bullet_similarity_key(text: str) -> set[str]:
+    """Set of length-3+ ASCII tokens used to compare cross-language bullets.
+
+    Cross-language twins typically share a long English keyword nucleus
+    ('Python', 'IBM', 'Watson', 'chatbot', 'game', 'development',
+    'Selenium') even when the surrounding prose is Czech. Comparing
+    those nuclei lets us collapse "\u0160koln\u00ed st\u00e1\u017ee zam\u011b\u0159en\u00e9 na "
+    "Python game development a IBM Watson chatbot v 2\u010dlenn\u00e9m t\u00fdmu" with
+    "Python game development" + "IBM Watson chatbot in a 2-person team".
+    """
+    if not text:
+        return set()
+    ascii_lower = _strip_diacritics(text).lower()
+    return {tok for tok in re.findall(r"[a-z0-9]{3,}", ascii_lower)}
+
+
+# Word-count threshold below which a bullet is considered a "fragment"
+# rather than a full sentence. Used by the cross-language dedup as a
+# secondary signal: when the section has at least one rich
+# OUTPUT_LANGUAGE bullet, any short other-language bullet next to it is
+# almost always a translation fragment the AI sprinkled in by mistake.
+_BULLET_FRAGMENT_WORD_LIMIT = 8
+
+
+def _bullet_word_count(text: str) -> int:
+    return len(re.findall(r"\S+", text or ""))
+
+
+def _dedup_cross_language_bullets(
+    section: ResumeSection, output_language: str
+) -> None:
+    """Drop other-language twin bullets within a single section.
+
+    The AI sometimes emits a Czech bullet describing a role and then
+    follows it with one or more English fragments that say the SAME
+    thing in fewer words ("\u0160koln\u00ed st\u00e1\u017ee zam\u011b\u0159en\u00e9 na Python "
+    "game development a IBM Watson chatbot v 2\u010dlenn\u00e9m t\u00fdmu" + "Python "
+    "game development" + "IBM Watson chatbot in a 2-person team" +
+    "School internships"). The standard ``_dedup_bullets`` only catches
+    byte-identical duplicates, so this pass complements it with two
+    heuristics:
+
+    1. Keyword-overlap twins: when two bullets share at least 2 long
+       keyword tokens AND the smaller side is >= 50% covered, drop the
+       one whose language doesn't match ``output_language``. Without a
+       clear language signal we keep the longer / earlier bullet.
+    2. Fragment guard: when the section has at least ONE clearly
+       OUTPUT_LANGUAGE bullet that is "rich" (>=
+       ``_BULLET_FRAGMENT_WORD_LIMIT`` words), drop every short
+       (< limit words) bullet that looks like the OTHER language.
+       This catches cross-language fragments the AI tacked on as
+       'extra detail' even when they have no token overlap with the
+       rich bullet ("\u0160koln\u00ed st\u00e1\u017ee" vs "School internships" -
+       semantically identical but they share zero ASCII tokens).
+
+    Conservative on purpose: nothing is dropped when the section is
+    monolingual (every bullet shares the OUTPUT_LANGUAGE) or when no
+    rich OUTPUT_LANGUAGE bullet exists yet.
+    """
+    if len(section.bullets) < 2 or not output_language:
+        return
+    code = (output_language or "en").strip().lower()
+    if code not in ("cs", "en"):
+        return
+    other_lang = "en" if code == "cs" else "cs"
+    keys = [_bullet_similarity_key(b.text) for b in section.bullets]
+    languages = [_bullet_language_signal(b.text) for b in section.bullets]
+    word_counts = [_bullet_word_count(b.text) for b in section.bullets]
+    keep = [True] * len(section.bullets)
+
+    # Pass 1: keyword-overlap twins.
+    for i, key_i in enumerate(keys):
+        if not keep[i] or len(key_i) < 2:
+            continue
+        for j in range(i + 1, len(keys)):
+            if not keep[j]:
+                continue
+            key_j = keys[j]
+            if len(key_j) < 2:
+                continue
+            shared = key_i & key_j
+            if len(shared) < 2:
+                continue
+            smaller = min(len(key_i), len(key_j))
+            if len(shared) / smaller < 0.5:
+                continue
+            lang_i = languages[i]
+            lang_j = languages[j]
+            if lang_i == code and lang_j == other_lang:
+                keep[j] = False
+            elif lang_j == code and lang_i == other_lang:
+                keep[i] = False
+                break
+            elif lang_i == lang_j:
+                if len(section.bullets[i].text) >= len(section.bullets[j].text):
+                    keep[j] = False
+                else:
+                    keep[i] = False
+                    break
+            else:
+                if len(section.bullets[i].text) >= len(section.bullets[j].text):
+                    keep[j] = False
+                else:
+                    keep[i] = False
+                    break
+
+    # Pass 2: fragment guard. Only fires when the section has at least
+    # one rich OUTPUT_LANGUAGE bullet that survived pass 1 - that's the
+    # signal the section is "really" in OUTPUT_LANGUAGE and the other-
+    # language fragments are noise the AI sprinkled in.
+    has_rich_output_lang = any(
+        keep[i]
+        and languages[i] == code
+        and word_counts[i] >= _BULLET_FRAGMENT_WORD_LIMIT
+        for i in range(len(section.bullets))
+    )
+    if has_rich_output_lang:
+        for i in range(len(section.bullets)):
+            if not keep[i]:
+                continue
+            if languages[i] != other_lang:
+                continue
+            if word_counts[i] >= _BULLET_FRAGMENT_WORD_LIMIT:
+                continue
+            keep[i] = False
+
+    survivors = [b for b, k in zip(section.bullets, keep) if k]
+    if len(survivors) != len(section.bullets):
+        logger.info(
+            "_dedup_cross_language_bullets: dropped %d cross-language "
+            "twin bullet(s) from section %r (kept %d).",
+            len(section.bullets) - len(survivors),
+            section.title or section.subtitle or "?",
+            len(survivors),
+        )
+        section.bullets = survivors
+
+
+def _dedup_resume_sections(
+    resume: TailoredResume, output_language: str = "en"
+) -> None:
     """Collapse duplicate experience / project rows and dedup bullets per
     section in place.
 
@@ -830,6 +1013,15 @@ def _dedup_resume_sections(resume: TailoredResume) -> None:
     different seniority prefixes (Junior / Senior / Lead / ...) are
     NEVER merged even when the company + period match - they're real
     career progression entries that must stay separate.
+
+    Cross-language bullet dedup runs in the same pass so a section with
+    a rich Czech bullet followed by short English twins ("\u0160koln\u00ed st\u00e1\u017ee
+    ... Python game development a IBM Watson chatbot v 2\u010dlenn\u00e9m
+    t\u00fdmu" + "Python game development" + "IBM Watson chatbot in a
+    2-person team") collapses to just the OUTPUT_LANGUAGE bullet. The
+    cheap exact-dup pass cannot catch these because the surface text
+    differs; the keyword-overlap heuristic in
+    :func:`_dedup_cross_language_bullets` does.
     """
     # Experience: greedy O(n^2) merge with a two-tier match.
     # 1) Exact dedup-key equality is the cheap fast-path that catches the
@@ -841,6 +1033,7 @@ def _dedup_resume_sections(resume: TailoredResume) -> None:
     #    silently kept both copies side by side in the rendered resume.
     new_experience: list[ResumeSection] = []
     for section in resume.experience:
+        _dedup_cross_language_bullets(section, output_language)
         section.bullets = _dedup_bullets(section.bullets)
         key = _experience_dedup_key(section)
         merged = False
@@ -866,6 +1059,7 @@ def _dedup_resume_sections(resume: TailoredResume) -> None:
     new_projects: list[ResumeSection] = []
     seen_project_keys: set[str] = set()
     for section in resume.projects:
+        _dedup_cross_language_bullets(section, output_language)
         section.bullets = _dedup_bullets(section.bullets)
         key = _normalize_project_title(section.title)
         if key and key in seen_project_keys:
@@ -884,7 +1078,129 @@ def _dedup_resume_sections(resume: TailoredResume) -> None:
     # for education isn't a thing because education rows are strict-merged
     # earlier in profile_dedup, so duplicates here should be very rare.
     for section in resume.education:
+        _dedup_cross_language_bullets(section, output_language)
         section.bullets = _dedup_bullets(section.bullets)
+
+
+# ---------------------------------------------------------------------------
+# Education completeness: drop rows with no institution
+# ---------------------------------------------------------------------------
+
+# Tokens that pad a degree title without contributing real information when
+# the institution is missing ("Informatika studies", "Computer Science
+# studium"). Stripped before the completeness check so an entry whose
+# title is just "<field> studies" / "<field> studium" is still recognised
+# as broken.
+_EDUCATION_PADDING_TOKENS: frozenset[str] = frozenset({
+    "studies", "studium", "studia", "studie", "study",
+    "obor", "field", "of",
+})
+
+# Substrings (diacritics-stripped, lowercased) that name an institution
+# inside a degree title - their presence tells the completeness check
+# that the row already carries the school name and is fine even when
+# ``subtitle`` is empty (e.g. someone put 'Bachelor of Computer Science,
+# Czech University' all in one field).
+_INSTITUTION_MARKER_TOKENS: tuple[str, ...] = (
+    "university", "univerzita", "univerzity",
+    "fakulta", "fakulty", "faculty",
+    "skola", "skoly", "school",
+    "akademie", "academy",
+    "institute", "institut",
+    "college", "konzervator", "conservatory",
+    "spse", "cvut", "cuni", "vse", "czu", "vsb",
+    "muni", "upol", "tul", "vsem", "vsfs",
+)
+
+
+def _education_title_is_just_field(title: str) -> bool:
+    """``True`` when ``title`` is a bare field-of-study with no school name.
+
+    Used to detect AI-emitted rows like ``"Informatika studies"`` /
+    ``"Computer Science"`` that are missing the institution. We treat
+    these as broken (the user can't tell which school they belong to)
+    and the surrounding logic drops them entirely rather than rendering
+    a half-baked education row.
+
+    A title is "broken" when:
+
+    * after stripping padding words ('studies', 'studium', ...) and
+      common separator punctuation it has no recognised institution
+      marker token (university, fakulta, akademie, well-known abbrev),
+      AND
+    * it does not contain a 4-digit year (a year token usually means
+      the user wrote a free-form one-line entry like "BSc Informatics
+      2019-2023 Charles University" - too risky to drop blindly).
+
+    The check is conservative: we only return True when we're confident
+    the row is missing an institution. Anything else is considered
+    keep-able.
+    """
+    if not title:
+        return True
+    cleaned = _strip_diacritics(title).lower()
+    if re.search(r"\b(19|20)\d{2}\b", cleaned):
+        return False
+    if "," in cleaned:
+        # A comma suggests "Degree, Institution" - keep it; even if the
+        # second half is short it still gives the renderer something to
+        # show and we never want to delete real user content.
+        return False
+    cleaned_compact = re.sub(r"[\.,/\\\(\)\[\]_\-:|]", " ", cleaned)
+    if any(marker in cleaned_compact for marker in _INSTITUTION_MARKER_TOKENS):
+        return False
+    tokens = [t for t in cleaned_compact.split() if t]
+    if not tokens:
+        return True
+    non_padding = [t for t in tokens if t not in _EDUCATION_PADDING_TOKENS]
+    # When stripping the padding words leaves nothing, the title was
+    # purely 'studies' / 'studium' with no field at all.
+    if not non_padding:
+        return True
+    # A short title (<=3 non-padding tokens) with no institution marker,
+    # no year and no comma is almost always a bare field-of-study like
+    # "Informatika", "Informatika studies", "Computer Science" or
+    # "Computer Science studium". Drop it.
+    return len(non_padding) <= 3
+
+
+def _strip_incomplete_education(resume: TailoredResume) -> list[str]:
+    """Remove education rows that have no institution name.
+
+    Returns the dropped titles so the caller can include them in the
+    user-facing explanation. The resume's ``education`` list is mutated
+    in place.
+
+    Conservative: a row survives whenever it has a non-empty
+    ``subtitle`` (the institution slot) OR a title that obviously
+    carries the institution itself (e.g. someone who put "Charles
+    University" in the title because they had no separate institution
+    field). Only rows whose title is a bare field-of-study AND whose
+    subtitle is empty get dropped.
+    """
+    if not resume.education:
+        return []
+    survivors: list[ResumeSection] = []
+    dropped: list[str] = []
+    for section in resume.education:
+        subtitle = (section.subtitle or "").strip()
+        title = (section.title or "").strip()
+        if subtitle:
+            survivors.append(section)
+            continue
+        if title and not _education_title_is_just_field(title):
+            survivors.append(section)
+            continue
+        dropped.append(title or "(untitled education row)")
+    if dropped:
+        logger.warning(
+            "_strip_incomplete_education: dropped %d education row(s) "
+            "without an institution name: %s",
+            len(dropped),
+            dropped,
+        )
+        resume.education = survivors
+    return dropped
 
 
 def _enforce_bullet_floor(
@@ -1110,15 +1426,18 @@ def generate_tailored_resume(
     )
     # Order matters: translate residual strings first so dedup compares the
     # post-translation form (otherwise a Czech twin and an English twin
-    # would never match), THEN dedup, THEN re-inject missing rows from the
-    # candidate, THEN strip invented projects (so safety-net additions
-    # are real GitHub repos), THEN backfill periods, THEN ensure at least
-    # one project survived.
+    # would never match), THEN dedup (which also strips cross-language
+    # twin bullets in OUTPUT_LANGUAGE), THEN re-inject missing rows from
+    # the candidate, THEN strip invented projects (so safety-net
+    # additions are real GitHub repos), THEN strip incomplete education
+    # rows the AI emitted without an institution, THEN backfill periods,
+    # THEN ensure at least one project survived.
     _fixup_education_language(resume, output_language)
-    _dedup_resume_sections(resume)
+    _dedup_resume_sections(resume, output_language)
     _enforce_bullet_floor(resume, candidate)
     ensure_experience_section(resume, candidate, output_language)
     _strip_invented_projects(resume, candidate)
+    _strip_incomplete_education(resume)
     _backfill_periods(resume, candidate)
     return ensure_projects_section(resume, candidate)
 
@@ -1219,6 +1538,53 @@ def _format_safety_net_addition(section: ResumeSection) -> str:
     return " ".join(bits)
 
 
+def _candidate_has_linkedin(candidate: CandidateProfile) -> bool:
+    """Return True when the user supplied any LinkedIn signal at all.
+
+    Treats ``raw_linkedin_text`` and any entry tagged ``source='linkedin'``
+    or ``'both'`` as evidence the user provided a LinkedIn export. When
+    none of these are present we know the AI must not reference LinkedIn
+    in the explanation - the user never gave us anything to compare
+    against.
+    """
+    if (candidate.raw_linkedin_text or "").strip():
+        return True
+    if (candidate.linkedin_url or "").strip():
+        return True
+    for entry in (*candidate.experience, *candidate.education):
+        if entry.source in ("linkedin", "both"):
+            return True
+    return False
+
+
+# Sentence-ish chunks that name LinkedIn explicitly. We strip these out of
+# the AI's ``explanation`` field when ``_candidate_has_linkedin`` returns
+# False so the user is never told "your LinkedIn doesn't have X" after
+# they only provided a CV. Conservative on purpose: we only delete the
+# offending sentence, never the whole explanation.
+_LINKEDIN_MENTION_RE = re.compile(
+    r"(?:[^.!?\n]*?\bLinkedIn\b[^.!?\n]*[.!?]?)",
+    re.IGNORECASE,
+)
+
+
+def _strip_linkedin_mentions(text: str) -> str:
+    """Remove sentences that name LinkedIn from ``text``.
+
+    Used on the refine ``explanation`` when the user did NOT supply a
+    LinkedIn export. Keeps surrounding sentences intact so a
+    multi-sentence explanation still makes sense after the strip.
+    Returns the text trimmed of trailing whitespace; an empty string is
+    fine - the caller will fall back to its own default message.
+    """
+    if not text or "linkedin" not in text.lower():
+        return text
+    cleaned = _LINKEDIN_MENTION_RE.sub("", text)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
 def refine_tailored_resume(
     provider: BaseAIProvider,
     current_resume: TailoredResume,
@@ -1228,6 +1594,7 @@ def refine_tailored_resume(
     answers: AnswersBundle | None = None,
     evidence: Sequence[EvidenceItem] = (),
     output_language: str = "en",
+    previous_explanation: str = "",
 ) -> RefinedResume:
     """Re-generate the resume incorporating the user's textual feedback.
 
@@ -1236,16 +1603,24 @@ def refine_tailored_resume(
     explanation is the AI's own note appended (when applicable) with a
     deterministic safety-net line listing any experience rows the AI
     dropped and we re-injected from the candidate profile.
+
+    ``previous_explanation`` is the explanation the AI returned in the
+    previous refine round (empty on the first round). It lets the model
+    interpret bare affirmations like ``"ano"`` / ``"yes"`` as agreement
+    with the suggestion it made earlier - without that context, the
+    user typing "ano" after the AI asked "Mohu sma\u017eat X?" would
+    produce a no-op refine.
     """
     answers = answers or AnswersBundle()
     refined = provider.refine_resume(
         current_resume, feedback, job, candidate, answers, evidence,
         output_language=output_language,
+        previous_explanation=previous_explanation,
     )
     resume = refined.resume
 
     _fixup_education_language(resume, output_language)
-    _dedup_resume_sections(resume)
+    _dedup_resume_sections(resume, output_language)
     _enforce_bullet_floor(resume, candidate)
 
     # When the user explicitly asks to delete a position ('smaž', 'remove',
@@ -1264,6 +1639,7 @@ def refine_tailored_resume(
     missing_before = _compute_missing_experience(resume, candidate, skip_keys=skip_keys)
     ensure_experience_section(resume, candidate, output_language, skip_keys=skip_keys)
     dropped_projects = _strip_invented_projects(resume, candidate)
+    _strip_incomplete_education(resume)
     _backfill_periods(resume, candidate)
     ensure_projects_section(resume, candidate)
 
@@ -1271,8 +1647,14 @@ def refine_tailored_resume(
     # then we append a one-liner per safety-net intervention so the user
     # sees both AI- and rule-based modifications in one place.
     explanation_parts: list[str] = []
-    if refined.explanation:
-        explanation_parts.append(refined.explanation.strip())
+    ai_explanation = (refined.explanation or "").strip()
+    # When the user did NOT supply LinkedIn, strip any sentence that
+    # names LinkedIn from the AI's note - the user never gave us
+    # LinkedIn data, so 'na LinkedInu nem\u00e1\u0161 X' is hostile noise.
+    if ai_explanation and not _candidate_has_linkedin(candidate):
+        ai_explanation = _strip_linkedin_mentions(ai_explanation)
+    if ai_explanation:
+        explanation_parts.append(ai_explanation)
 
     # Always announce safety-net additions so the user is never surprised
     # by a row they didn't see in the previous draft. The "add intent"
@@ -1327,10 +1709,15 @@ __all__ = [
 # ---------------------------------------------------------------------------
 _TEST_ONLY = (  # noqa: F841 - documentation aid
     "_dedup_resume_sections",
+    "_dedup_cross_language_bullets",
     "_strip_invented_projects",
+    "_strip_incomplete_education",
+    "_strip_linkedin_mentions",
+    "_candidate_has_linkedin",
     "_fixup_education_language",
     "_translate_period",
     "_normalize_project_title",
     "_project_title_is_evidenced",
     "_looks_czech",
+    "_education_title_is_just_field",
 )

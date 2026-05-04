@@ -30,12 +30,17 @@ from src.models.evidence import EvidenceItem
 from src.models.job import JobPosting
 from src.models.match import AnswersBundle
 from src.services.resume_generator import (
+    _candidate_has_linkedin,
+    _dedup_cross_language_bullets,
     _dedup_resume_sections,
+    _education_title_is_just_field,
     _fixup_education_language,
     _looks_czech,
     _normalize_project_title,
     _project_title_is_evidenced,
+    _strip_incomplete_education,
     _strip_invented_projects,
+    _strip_linkedin_mentions,
     _translate_period,
     ensure_projects_section,
     refine_tailored_resume,
@@ -158,6 +163,7 @@ class _StubProvider(BaseAIProvider):
         self._refined = refined
         self.received_feedback: str | None = None
         self.received_lang: str | None = None
+        self.received_previous_explanation: str | None = None
 
     def refine_resume(  # type: ignore[override]
         self,
@@ -168,9 +174,11 @@ class _StubProvider(BaseAIProvider):
         answers: AnswersBundle,
         evidence: Sequence[EvidenceItem] = (),
         output_language: str = "en",
+        previous_explanation: str = "",
     ) -> RefinedResume:
         self.received_feedback = feedback
         self.received_lang = output_language
+        self.received_previous_explanation = previous_explanation
         return self._refined
 
     # --- everything else is a NotImplementedError so the test never
@@ -974,3 +982,370 @@ def test_refine_safety_net_does_not_resurrect_excluded_role_when_candidate_was_f
     assert "Software Developer" in titles
     assert "IT Tester" not in titles
     assert "IT Tester" not in (out.explanation or "")
+
+
+# ---------------------------------------------------------------------------
+# Cross-language bullet dedup within a single section
+# ---------------------------------------------------------------------------
+
+
+def test_dedup_cross_language_bullets_keeps_czech_in_cs_resume():
+    """The reported bug: a Czech bullet plus its English fragments end
+    up side-by-side in the same section. With OUTPUT_LANGUAGE=cs the
+    helper drops the English twins so only the Czech wording survives.
+    """
+    section = ResumeSection(
+        title="Developer",
+        subtitle="CreatiWeb \u00b7 AppYours \u00b7 IBM",
+        period="2019 - 2020",
+        bullets=[
+            ResumeBullet(
+                text=(
+                    "\u0160koln\u00ed st\u00e1\u017ee zam\u011b\u0159en\u00e9 na Python game development "
+                    "a IBM Watson chatbot v 2\u010dlenn\u00e9m t\u00fdmu; oba projekty "
+                    "byly nasazeny do produkce."
+                ),
+            ),
+            ResumeBullet(text="School internships"),
+            ResumeBullet(text="Python game development"),
+            ResumeBullet(text="IBM Watson chatbot in a 2-person team"),
+        ],
+    )
+    _dedup_cross_language_bullets(section, "cs")
+    texts = [b.text for b in section.bullets]
+    # The rich Czech bullet survives; every English twin must be gone.
+    assert any("\u0160koln\u00ed st\u00e1\u017ee" in t for t in texts)
+    assert "School internships" not in texts
+    assert "Python game development" not in texts
+    assert "IBM Watson chatbot in a 2-person team" not in texts
+
+
+def test_dedup_cross_language_bullets_keeps_english_in_en_resume():
+    """Mirror of the previous test for OUTPUT_LANGUAGE=en: when a Czech
+    bullet sits next to its English twin in an English resume, drop the
+    Czech bullet."""
+    section = ResumeSection(
+        title="Developer",
+        subtitle="Acme",
+        bullets=[
+            ResumeBullet(text="Vyvinul Python REST API pro objedn\u00e1vky."),
+            ResumeBullet(text="Built a Python REST API for orders."),
+        ],
+    )
+    _dedup_cross_language_bullets(section, "en")
+    texts = [b.text for b in section.bullets]
+    assert "Built a Python REST API for orders." in texts
+    assert all("Vyvinul" not in t for t in texts)
+
+
+def test_dedup_cross_language_bullets_leaves_distinct_bullets_alone():
+    """Conservative guard: two genuinely different Czech bullets share
+    only stop-word noise; the dedup must NOT collapse them."""
+    section = ResumeSection(
+        title="QA",
+        subtitle="Acme",
+        bullets=[
+            ResumeBullet(text="Manu\u00e1ln\u00ed regresn\u00ed testov\u00e1n\u00ed AVG."),
+            ResumeBullet(text="Automatizace E2E test\u016f s Playwright."),
+        ],
+    )
+    _dedup_cross_language_bullets(section, "cs")
+    assert len(section.bullets) == 2
+
+
+# ---------------------------------------------------------------------------
+# Education completeness: drop "Informatika studies" with no institution
+# ---------------------------------------------------------------------------
+
+
+def test_education_title_is_just_field_recognises_padding():
+    """Bare field-of-study with no school = broken row."""
+    assert _education_title_is_just_field("Informatika studies")
+    assert _education_title_is_just_field("Computer Science studies")
+    assert _education_title_is_just_field("Informatika")
+    assert _education_title_is_just_field("studies")
+    # A real degree title with the university name embedded is fine.
+    assert not _education_title_is_just_field(
+        "Bachelor of Computer Science, Czech University"
+    )
+
+
+def test_strip_incomplete_education_drops_rows_without_institution():
+    """A row whose subtitle is empty AND title is just the field gets
+    removed; everything else stays put."""
+    resume = TailoredResume(
+        name="X",
+        professional_summary="QA.",
+        education=[
+            ResumeSection(title="Informatika studies", subtitle=""),
+            ResumeSection(
+                title="Bachelor of Computer Science",
+                subtitle="\u010cesk\u00e1 zem\u011bd\u011blsk\u00e1 univerzita v Praze",
+            ),
+            ResumeSection(
+                title="Maturita",
+                subtitle="SP\u0160E Je\u010dn\u00e1, Praha",
+            ),
+        ],
+    )
+    dropped = _strip_incomplete_education(resume)
+    assert dropped == ["Informatika studies"]
+    titles = [s.title for s in resume.education]
+    assert "Informatika studies" not in titles
+    assert "Bachelor of Computer Science" in titles
+    assert "Maturita" in titles
+
+
+def test_strip_incomplete_education_keeps_row_when_only_subtitle_filled():
+    """When the subtitle (institution) is set but the title is empty,
+    the row still has enough information to render and survives."""
+    resume = TailoredResume(
+        name="X",
+        professional_summary="QA.",
+        education=[
+            ResumeSection(title="", subtitle="\u010cVUT v Praze"),
+        ],
+    )
+    dropped = _strip_incomplete_education(resume)
+    assert dropped == []
+    assert len(resume.education) == 1
+
+
+# ---------------------------------------------------------------------------
+# LinkedIn-absence guard: never reference LinkedIn in the explanation when
+# the user did not supply a LinkedIn export
+# ---------------------------------------------------------------------------
+
+
+def test_candidate_has_linkedin_detects_raw_text():
+    candidate = CandidateProfile(
+        full_name="X",
+        raw_linkedin_text="some LinkedIn export text here",
+    )
+    assert _candidate_has_linkedin(candidate)
+
+
+def test_candidate_has_linkedin_detects_linkedin_url():
+    candidate = CandidateProfile(
+        full_name="X",
+        linkedin_url="https://www.linkedin.com/in/test",
+    )
+    assert _candidate_has_linkedin(candidate)
+
+
+def test_candidate_has_linkedin_detects_source_label():
+    candidate = CandidateProfile(
+        full_name="X",
+        experience=[
+            WorkExperience(
+                id="exp-1",
+                title="Dev",
+                company="Acme",
+                source="linkedin",
+            ),
+        ],
+    )
+    assert _candidate_has_linkedin(candidate)
+
+
+def test_candidate_has_linkedin_returns_false_when_only_cv_present():
+    candidate = CandidateProfile(
+        full_name="X",
+        raw_cv_text="only a CV",
+        experience=[
+            WorkExperience(
+                id="exp-1",
+                title="Dev",
+                company="Acme",
+                source="cv",
+            ),
+        ],
+    )
+    assert not _candidate_has_linkedin(candidate)
+
+
+def test_strip_linkedin_mentions_removes_offending_sentence():
+    text = (
+        "Doplnil jsem profesn\u00ed shrnut\u00ed. Polo\u017eku 'Java backend' jsi "
+        "nem\u011bl/a v LinkedIn profilu, tak\u017ee jsem ji nep\u0159idal. "
+        "M\u016f\u017ee\u0161 ji potvrdit dal\u0161\u00edm refinem."
+    )
+    out = _strip_linkedin_mentions(text)
+    assert "LinkedIn" not in out
+    assert "Doplnil jsem profesn\u00ed shrnut\u00ed." in out
+    assert "M\u016f\u017ee\u0161 ji potvrdit" in out
+
+
+def test_strip_linkedin_mentions_noop_when_absent():
+    text = "Just a normal explanation with no LinkedIn reference."
+    # Sanity: still trimmed but otherwise intact when the keyword is
+    # missing. (Note: the substring "LinkedIn" IS present here, so it
+    # does get scrubbed - swap to a clean string.)
+    clean = "Just a normal explanation with no social-network reference."
+    assert _strip_linkedin_mentions(clean) == clean
+
+
+def test_refine_strips_linkedin_mentions_when_user_did_not_provide_linkedin():
+    """End-to-end safety net: even when the AI hallucinates a sentence
+    about LinkedIn, the refine wrapper must scrub it from the
+    explanation when the candidate has no LinkedIn data on file."""
+    candidate = CandidateProfile(
+        full_name="Test",
+        raw_cv_text="Just a CV.",
+        experience=[
+            WorkExperience(
+                id="exp-1",
+                title="Engineer",
+                company="Acme",
+                period="2024 - present",
+                bullets=["Did things."],
+                source="cv",
+            ),
+        ],
+    )
+    starting = TailoredResume(
+        name="Test",
+        professional_summary="Engineer.",
+        technical_skills=["Python"],
+        experience=[
+            ResumeSection(
+                title="Engineer",
+                subtitle="Acme",
+                period="2024 - present",
+                bullets=[ResumeBullet(text="Did things.")],
+            ),
+        ],
+        role_targeted_for="Engineer",
+    )
+    refined = TailoredResume.model_validate(starting.model_dump())
+    bad_explanation = (
+        "Polo\u017eku 'Java backend' jsi nem\u011bl/a v LinkedIn profilu, tak\u017ee "
+        "jsem ji nep\u0159idal. Profesn\u00ed shrnut\u00ed jsem zkr\u00e1til/a."
+    )
+    provider = _StubProvider(
+        RefinedResume(resume=refined, explanation=bad_explanation)
+    )
+    out = refine_tailored_resume(
+        provider, starting, "Zkra\u0165 shrnut\u00ed.",
+        _make_job(), candidate,
+        output_language="cs",
+    )
+    assert "LinkedIn" not in (out.explanation or "")
+    assert "shrnut\u00ed" in out.explanation
+
+
+def test_refine_keeps_linkedin_mentions_when_user_supplied_linkedin():
+    """Counter-test: when the user DID provide a LinkedIn export, the
+    AI may legitimately reference it (e.g. 'I added the date from your
+    LinkedIn'). The strip must NOT fire in that case."""
+    candidate = CandidateProfile(
+        full_name="Test",
+        raw_cv_text="CV.",
+        raw_linkedin_text="LinkedIn export contents.",
+        experience=[
+            WorkExperience(
+                id="exp-1",
+                title="Engineer",
+                company="Acme",
+                source="both",
+            ),
+        ],
+    )
+    starting = TailoredResume(
+        name="Test",
+        professional_summary="Engineer.",
+        technical_skills=["Python"],
+        experience=[
+            ResumeSection(title="Engineer", subtitle="Acme"),
+        ],
+        role_targeted_for="Engineer",
+    )
+    refined = TailoredResume.model_validate(starting.model_dump())
+    legit_explanation = "Doplnil jsem datum z LinkedIn exportu."
+    provider = _StubProvider(
+        RefinedResume(resume=refined, explanation=legit_explanation)
+    )
+    out = refine_tailored_resume(
+        provider, starting, "Doplnit datum.",
+        _make_job(), candidate,
+        output_language="cs",
+    )
+    assert "LinkedIn" in (out.explanation or "")
+
+
+# ---------------------------------------------------------------------------
+# previous_explanation: threaded through to the provider so the AI can
+# interpret short affirmations as agreement with its own prior suggestion
+# ---------------------------------------------------------------------------
+
+
+def test_refine_passes_previous_explanation_to_provider():
+    candidate = _make_candidate_with_two_qa_roles()
+    starting = _make_resume_missing_junior()
+    provider = _StubProvider(
+        RefinedResume(resume=starting, explanation="Done.")
+    )
+    refine_tailored_resume(
+        provider, starting, "ano",
+        _make_job(), candidate,
+        output_language="cs",
+        previous_explanation="Mohu sma\u017eat pozici X?",
+    )
+    assert provider.received_previous_explanation == "Mohu sma\u017eat pozici X?"
+
+
+def test_refine_previous_explanation_defaults_to_empty():
+    """Backwards compatibility: callers that don't pass the new arg get
+    an empty string forwarded to the provider."""
+    candidate = _make_candidate_with_two_qa_roles()
+    starting = _make_resume_missing_junior()
+    provider = _StubProvider(
+        RefinedResume(resume=starting, explanation="")
+    )
+    refine_tailored_resume(
+        provider, starting, "Polish the summary.",
+        _make_job(), candidate,
+        output_language="en",
+    )
+    assert provider.received_previous_explanation == ""
+
+
+# ---------------------------------------------------------------------------
+# Initial generate: the cross-language bullet dedup runs in the main
+# generation pipeline too so a freshly generated CS resume never carries
+# English twin bullets that the AI emitted on the side.
+# ---------------------------------------------------------------------------
+
+
+def test_dedup_resume_sections_drops_cross_language_twin_bullets():
+    """Wired into _dedup_resume_sections: when output_language='cs',
+    English twin bullets in the same section disappear in the standard
+    dedup pass."""
+    resume = TailoredResume(
+        name="X",
+        professional_summary="Dev.",
+        experience=[
+            ResumeSection(
+                title="Developer",
+                subtitle="CreatiWeb \u00b7 AppYours \u00b7 IBM",
+                period="2019 - 2020",
+                bullets=[
+                    ResumeBullet(
+                        text=(
+                            "\u0160koln\u00ed st\u00e1\u017ee zam\u011b\u0159en\u00e9 na Python "
+                            "game development a IBM Watson chatbot v "
+                            "2\u010dlenn\u00e9m t\u00fdmu."
+                        ),
+                    ),
+                    ResumeBullet(text="Python game development"),
+                    ResumeBullet(text="IBM Watson chatbot in a 2-person team"),
+                ],
+            ),
+        ],
+    )
+    _dedup_resume_sections(resume, "cs")
+    bullets = [b.text for b in resume.experience[0].bullets]
+    # Czech rich bullet wins, English twins are gone.
+    assert any("\u0160koln\u00ed st\u00e1\u017ee" in b for b in bullets)
+    assert "Python game development" not in bullets
+    assert "IBM Watson chatbot in a 2-person team" not in bullets
