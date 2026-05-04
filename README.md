@@ -9,12 +9,19 @@ ApplyPilot AI is a Python desktop GenAI application that turns a job posting URL
 | Tested on | Python 3.11 / 3.12 / 3.13, Windows / macOS / Linux | Cost when running demos | $0 |
 | Cost per real application | ~$0.035 (gpt-4o-mini) | Cost per 30 apps / month | ~$1.05 |
 
-> Screenshots placeholder - drop your own captures into `docs/screenshots/`:
->
-> - `docs/screenshots/welcome.png`
-> - `docs/screenshots/job_input.png`
-> - `docs/screenshots/match_report.png`
-> - `docs/screenshots/documents.png`
+## Screenshots
+
+![Setup screen - Build a tailored application: paste a job URL or job text, drop your CV (PDF / DOCX / TXT / HTML), optionally add a LinkedIn export and a GitHub profile, then click Run analysis.](docs/screenshots/welcome.png)
+
+*Setup - single scrollable page with three cards (job posting, resume + LinkedIn, GitHub profile). The `Try sample data` button pre-fills demo inputs so you can click straight through to a finished application package without an API key.*
+
+![Match report - overall score gauge plus four category bars (Technical skills, Experience, Tools, Process / QA) and three columns: Matched, Missing / risky gaps, ATS keywords.](docs/screenshots/match_report.png)
+
+*Match report - overall and per-category scores, matched / missing / ATS keyword columns and an evidence preview underneath. Hover any column heading for an in-app explanation of what it means in ATS terminology.*
+
+![Documents - tabs for Tailored Resume, Modern Resume, Cover Letter, Match Report, Interview Prep, Skill Gap Plan and Evidence (read-only); each tab exports to MD / HTML / DOCX, or you can click Save full analysis to write all 10 artefacts at once.](docs/screenshots/documents.png)
+
+*Documents - tabbed editor with per-tab `Export MD / HTML / DOCX` buttons and a single `Save full analysis` action that writes all 10 artefacts to `outputs/<company>-<role>-<timestamp>/`.*
 
 ---
 
