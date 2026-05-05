@@ -245,6 +245,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "docs.export.docx_title": "Export {tab} as DOCX",
         "docs.saved_status": "Saved to {path}",
         "docs.saved_html_status": "Saved styled HTML to {path}",
+        "docs.pdf.skipped": (
+            "Saved to {path} - PDF export skipped (install Chrome / Edge or "
+            "run `playwright install chromium` to enable A4 PDFs)."
+        ),
         "docs.read_only_tip": (
             "Read-only view of an existing analysis. Run a fresh analysis "
             "to enable saving."
@@ -434,6 +438,18 @@ _STRINGS: dict[str, dict[str, str]] = {
         "out_lang.option.cs": "Čeština",
         "out_lang.confirm": "Generate documents",
         "out_lang.cancel": "Cancel",
+        "out_lang.style_label": "Visual style",
+        "out_lang.style.intro": (
+            "Choose how the resume + cover letter PDF should look. Pick "
+            "Random to get a different layout / colour scheme each save."
+        ),
+        "out_lang.style.random": "Random (different each time)",
+        "out_lang.style.teal_sidebar": "Teal sidebar (two-column)",
+        "out_lang.style.burgundy_serif": "Burgundy serif (single column)",
+        "out_lang.style.slate_minimal": "Slate minimal (clean, single column)",
+        "out_lang.style.forest_sidebar": "Forest sidebar (two-column)",
+        "out_lang.style.indigo_header": "Indigo header band (single column)",
+        "out_lang.style.sunset_modern": "Sunset coral (two-column)",
         # ---- settings dialog ----
         "settings.title": "AI provider settings",
         "settings.section": "AI provider",
@@ -759,6 +775,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "docs.export.docx_title": "Exportovat {tab} jako DOCX",
         "docs.saved_status": "Uloženo do {path}",
         "docs.saved_html_status": "Stylované HTML uloženo do {path}",
+        "docs.pdf.skipped": (
+            "Uloženo do {path} - PDF nebylo vytvořeno (nainstaluj Chrome / Edge "
+            "nebo spusť `playwright install chromium`, aby šlo generovat A4 PDF)."
+        ),
         "docs.read_only_tip": (
             "Pouze náhled existující analýzy. Spusť novou analýzu, aby šlo ukládat."
         ),
@@ -940,6 +960,18 @@ _STRINGS: dict[str, dict[str, str]] = {
         "out_lang.option.cs": "Čeština",
         "out_lang.confirm": "Vygenerovat dokumenty",
         "out_lang.cancel": "Zrušit",
+        "out_lang.style_label": "Vizuální styl",
+        "out_lang.style.intro": (
+            "Vyber, jak má vypadat životopis a motivační dopis ve formátu PDF. "
+            "Možnost \u201eNáhodný\u201c při každém uložení vytvoří jiné rozložení a barvy."
+        ),
+        "out_lang.style.random": "Náhodný (jiný styl pokaždé)",
+        "out_lang.style.teal_sidebar": "Tyrkysový postranní panel (dva sloupce)",
+        "out_lang.style.burgundy_serif": "Bordó serif (jeden sloupec)",
+        "out_lang.style.slate_minimal": "Slate minimal (čistý, jeden sloupec)",
+        "out_lang.style.forest_sidebar": "Lesní postranní panel (dva sloupce)",
+        "out_lang.style.indigo_header": "Indigová hlavička (jeden sloupec)",
+        "out_lang.style.sunset_modern": "Korálová (dva sloupce)",
         "settings.title": "Nastavení AI poskytovatele",
         "settings.section": "AI poskytovatel",
         "settings.tip_html": (

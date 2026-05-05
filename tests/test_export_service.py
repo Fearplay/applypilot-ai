@@ -5,6 +5,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
 from src.models.candidate import CandidateProfile
 from src.models.documents import (
     ResumeBullet,
@@ -52,11 +54,15 @@ def _build_package(fake_provider, sample_job_text, sample_cv_text) -> GeneratedA
     )
 
 
-def test_export_writes_all_ten_files(tmp_path: Path, fake_provider, sample_job_text, sample_cv_text):
+def test_export_writes_every_user_doc(tmp_path: Path, fake_provider, sample_job_text, sample_cv_text):
     package = _build_package(fake_provider, sample_job_text, sample_cv_text)
-    paths = export_package(package, tmp_path)
+    summary = export_package(package, tmp_path)
+    paths = summary.paths
 
-    expected = [
+    # Markdown / DOCX / HTML for both documents always ship; PDF is best
+    # effort and may be skipped when Playwright cannot launch a browser
+    # in CI - covered by ``test_export_skips_pdf_when_renderer_unavailable``.
+    expected_required = [
         paths.resume_md,
         paths.resume_docx,
         paths.resume_html,
@@ -68,31 +74,88 @@ def test_export_writes_all_ten_files(tmp_path: Path, fake_provider, sample_job_t
         paths.evidence_json,
         paths.summary_html,
     ]
-    for p in expected:
+    for p in expected_required:
         assert p.exists(), f"Missing: {p}"
         assert p.stat().st_size > 0, f"Empty: {p}"
 
-    # Resume MD should contain the candidate's name.
     assert package.tailored_resume.name in paths.resume_md.read_text(encoding="utf-8")
-
-    # Match report MD should mention overall score.
     assert "Overall score" in paths.match_report_md.read_text(encoding="utf-8")
 
-    # Evidence JSON must parse and contain "items".
     data = json.loads(paths.evidence_json.read_text(encoding="utf-8"))
     assert "items" in data
 
-    # Summary HTML wraps the body and mentions the role.
     html = paths.summary_html.read_text(encoding="utf-8")
     assert "<html" in html
     assert package.job_posting.title in html
 
-    # Styled resume HTML must be self-contained (sidebar + main + inlined CSS).
+    # Default theme is the classic two-column teal layout, so the
+    # styled HTML must still ship a sidebar + main column + inlined CSS.
     styled = paths.resume_html.read_text(encoding="utf-8")
     assert '<aside class="sidebar">' in styled
     assert '<main class="main">' in styled
     assert "<style>" in styled
     assert package.tailored_resume.name in styled
+
+
+def test_export_uses_candidate_slug_for_resume_and_cover_filenames(
+    tmp_path: Path, fake_provider, sample_job_text, sample_cv_text
+):
+    """Every resume / cover letter artefact is named ``{slug}_cv.*`` /
+    ``{slug}_cover_letter.*`` so a recruiter who downloads the folder
+    sees who the documents belong to without opening them. Match report
+    / interview prep / skill gap / evidence keep generic filenames.
+    """
+    package = _build_package(fake_provider, sample_job_text, sample_cv_text)
+    summary = export_package(package, tmp_path)
+    paths = summary.paths
+
+    from src.utils.slugify import name_slug
+
+    expected_slug = name_slug(
+        package.tailored_resume.name or package.candidate_profile.full_name
+    )
+    assert paths.resume_md.name == f"{expected_slug}_cv.md"
+    assert paths.resume_docx.name == f"{expected_slug}_cv.docx"
+    assert paths.resume_html.name == f"{expected_slug}_cv.html"
+    assert paths.resume_pdf.name == f"{expected_slug}_cv.pdf"
+    assert paths.cover_letter_md.name == f"{expected_slug}_cover_letter.md"
+    assert paths.cover_letter_docx.name == f"{expected_slug}_cover_letter.docx"
+    assert paths.cover_letter_pdf.name == f"{expected_slug}_cover_letter.pdf"
+    # Non-personal artefacts stay on their stable names so re-opens never
+    # have to scan for "the match report".
+    assert paths.match_report_md.name == "match_report.md"
+    assert paths.interview_md.name == "interview_questions.md"
+    assert paths.skill_gap_md.name == "skill_gap_plan.md"
+    assert paths.evidence_json.name == "evidence_report.json"
+
+
+def test_export_skips_pdf_when_renderer_unavailable(
+    tmp_path: Path, monkeypatch, fake_provider, sample_job_text, sample_cv_text
+):
+    """When Playwright can't launch a browser the markdown / docx / html
+    must still ship and ``ExportSummary.pdf_skipped`` must be set so the
+    GUI can surface a "install Chrome / Edge" hint."""
+    from src.services import export_service
+
+    def _boom(*_args, **_kwargs):
+        raise export_service.PdfRendererUnavailableError(
+            "no browser - test stub"
+        )
+
+    monkeypatch.setattr(export_service, "render_html_to_pdf", _boom)
+
+    package = _build_package(fake_provider, sample_job_text, sample_cv_text)
+    summary = export_package(package, tmp_path)
+
+    assert summary.pdf_skipped is True
+    assert "no browser" in summary.pdf_skip_reason
+    # Markdown / DOCX / HTML still on disk:
+    assert summary.paths.resume_md.exists()
+    assert summary.paths.resume_html.exists()
+    assert summary.paths.cover_letter_md.exists()
+    # PDFs were not written:
+    assert not summary.paths.resume_pdf.exists()
+    assert not summary.paths.cover_letter_pdf.exists()
 
 
 def test_history_round_trip(tmp_path: Path, fake_provider, sample_job_text, sample_cv_text):
@@ -106,18 +169,54 @@ def test_history_round_trip(tmp_path: Path, fake_provider, sample_job_text, samp
 
 def test_load_package_files_round_trip(tmp_path: Path, fake_provider, sample_job_text, sample_cv_text):
     package = _build_package(fake_provider, sample_job_text, sample_cv_text)
-    paths = export_package(package, tmp_path)
-    payload = load_package_files(paths.folder)
+    summary = export_package(package, tmp_path)
+    payload = load_package_files(summary.folder)
 
-    assert payload.folder == paths.folder
+    assert payload.folder == summary.folder
     assert package.tailored_resume.name in payload.resume_md
-    assert payload.cover_letter_md.startswith("# Cover letter")
+    # The cover letter markdown no longer carries a "Cover letter for X
+    # at Y" heading - it must read as a direct message starting with the
+    # salutation per the user's explicit request.
+    assert "Cover letter for" not in payload.cover_letter_md
+    assert "# Cover letter" not in payload.cover_letter_md
+    assert payload.cover_letter_md.lstrip().startswith("Dear ") \
+        or payload.cover_letter_md.lstrip().startswith("Vážený") \
+        or payload.cover_letter_md.lstrip().startswith("Vážená")
     assert "Overall score" in payload.match_report_md
     assert payload.interview_md.startswith("# Interview Preparation")
     assert payload.skill_gap_md.startswith("# Skill Gap Plan")
+    # Default theme is two-column-sidebar so ``<aside>`` survives.
     assert "<aside" in payload.styled_resume_html
     assert isinstance(payload.evidence, dict)
     assert "items" in payload.evidence
+
+
+def test_load_package_files_back_compat_with_legacy_filenames(tmp_path: Path):
+    """A folder still using the pre-rename ``tailored_resume.*`` /
+    ``cover_letter.*`` filenames must keep loading - older saved
+    analyses on disk should never need a manual rename to re-open."""
+    legacy = tmp_path / "legacy"
+    legacy.mkdir()
+    (legacy / "tailored_resume.md").write_text(
+        "# John Doe\n\n## Profile\nSenior dev.\n", encoding="utf-8"
+    )
+    (legacy / "tailored_resume.html").write_text(
+        '<html><body><aside class="sidebar"></aside></body></html>',
+        encoding="utf-8",
+    )
+    (legacy / "cover_letter.md").write_text(
+        "Dear Hiring Team,\n\nI am writing to ...\n\nBest regards,\nJohn Doe\n",
+        encoding="utf-8",
+    )
+    (legacy / "match_report.md").write_text(
+        "# Match Report\n\n**Overall score: 80 / 100**\n", encoding="utf-8"
+    )
+
+    payload = load_package_files(legacy)
+    assert "John Doe" in payload.resume_md
+    assert "Dear Hiring Team" in payload.cover_letter_md
+    assert "<aside" in payload.styled_resume_html
+    assert "Overall score" in payload.match_report_md
 
 
 def test_load_package_files_handles_missing_folder(tmp_path: Path):
@@ -485,3 +584,246 @@ def test_localise_location_styled_html_no_longer_leaks_metropolitan_area():
     assert "Prague Metropolitan Area" in html
     assert "Czech Republic" in html
     assert "Praha metropolitní oblast" not in html
+
+
+# ---------------------------------------------------------------------------
+# name_slug + filename-based naming
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "input_name, expected",
+    [
+        ("Jan Novak", "jan_novak"),
+        ("Jan Novák", "jan_novak"),
+        ("Jana Nováková", "jana_novakova"),
+        ("Anna-Maria von Bismarck", "anna_maria_von_bismarck"),
+        ("    spaced   name   ", "spaced_name"),
+        ("", "applicant"),
+        ("###", "applicant"),
+        ("J. Doe", "j_doe"),
+    ],
+)
+def test_name_slug_handles_diacritics_and_separators(input_name, expected):
+    from src.utils.slugify import name_slug
+
+    assert name_slug(input_name) == expected
+
+
+# ---------------------------------------------------------------------------
+# Visual themes
+# ---------------------------------------------------------------------------
+def test_every_theme_renders_with_unique_accent_colour():
+    """Walk every shipped theme and assert its accent colour shows up
+    uniquely in the rendered HTML so a future refactor cannot silently
+    collapse all themes back into one."""
+    from src.services.document_themes import RESUME_THEMES
+
+    resume = TailoredResume(
+        name="Jana Nováková",
+        professional_summary="Testerka.",
+        technical_skills=["Python", "Playwright", "Docker"],
+        experience=[
+            ResumeSection(
+                title="Senior QA",
+                subtitle="Gen Digital",
+                bullets=[ResumeBullet(text="Built tests.")],
+            )
+        ],
+        role_targeted_for="QA",
+    )
+    candidate = CandidateProfile(
+        full_name="Jana Nováková",
+        contact_email="jana@example.cz",
+        spoken_languages=["Czech (native)", "English (C1)"],
+    )
+
+    seen_accents: set[str] = set()
+    seen_html: set[str] = set()
+    for slug, theme in RESUME_THEMES.items():
+        html = tailored_resume_to_styled_html(
+            resume, candidate, output_language="en", theme=slug
+        )
+        # The accent colour must appear inside the <style> block.
+        assert theme.accent.lower() in html.lower(), (
+            f"theme {slug!r} did not embed its accent {theme.accent!r}"
+        )
+        # And every theme's HTML body must differ from every other theme
+        # (different layout structure or different palette in the CSS).
+        body = html
+        assert body not in seen_html, f"theme {slug!r} produced duplicate HTML"
+        seen_html.add(body)
+        seen_accents.add(theme.accent.lower())
+    # We ship at least 6 themes, every accent unique.
+    assert len(seen_accents) >= 6
+
+
+def test_random_theme_returns_one_of_the_registered_themes():
+    """The ``random`` slug must always resolve to a real theme - never
+    leak as a literal string into the rendered HTML."""
+    from src.services.document_themes import (
+        RESUME_THEMES,
+        resolve_theme,
+    )
+
+    for _ in range(10):
+        chosen = resolve_theme("random")
+        assert chosen.slug in RESUME_THEMES
+        assert chosen.slug != "random"
+
+
+def test_unknown_theme_slug_falls_back_to_default():
+    from src.services.document_themes import (
+        DEFAULT_THEME_SLUG,
+        resolve_theme,
+    )
+
+    chosen = resolve_theme("not-a-real-theme")
+    assert chosen.slug == DEFAULT_THEME_SLUG
+
+
+def test_export_persists_resolved_theme_on_package(
+    tmp_path: Path, fake_provider, sample_job_text, sample_cv_text
+):
+    """The exporter must persist the resolved theme slug on the package
+    so reopening a saved analysis renders it identically. ``random``
+    should be resolved to a concrete slug before storage."""
+    package = _build_package(fake_provider, sample_job_text, sample_cv_text)
+    export_package(package, tmp_path, theme="random")
+    assert package.output_theme != "random"
+
+    from src.services.document_themes import RESUME_THEMES
+    assert package.output_theme in RESUME_THEMES
+
+
+# ---------------------------------------------------------------------------
+# Cover letter cleanup
+# ---------------------------------------------------------------------------
+def test_strip_duplicate_signoff_removes_trailing_kind_regards_name():
+    """Issue: AI providers sometimes paste 'Kind regards, Jan Novák' at
+    the end of the last paragraph AND populate the structured ``closing``/
+    ``signature`` fields. The exporter prints both, so the saved file
+    shows the sign-off twice. The deterministic safety net must drop
+    the in-paragraph copy."""
+    from src.models.documents import CoverLetter
+    from src.services.cover_letter_generator import _strip_duplicate_signoff
+
+    cover = CoverLetter(
+        salutation="Dear Hiring Team,",
+        paragraphs=[
+            "I am writing to express my interest in the QA role.",
+            (
+                "I look forward to discussing the next steps.\n"
+                "Kind regards,\nJan Novák"
+            ),
+        ],
+        closing="Kind regards,",
+        signature="Jan Novák",
+    )
+    cleaned = _strip_duplicate_signoff(cover)
+    last = cleaned.paragraphs[-1]
+    assert "Kind regards" not in last
+    assert "Jan Novák" not in last
+    assert "look forward" in last  # body content is preserved
+
+
+def test_strip_duplicate_signoff_handles_diacritics_insensitive_match():
+    """A signature with diacritics ('Jan Novák') tucked at the end of the
+    last paragraph must be stripped even when the AI wrote it in
+    ASCII-folded form ('Jan Novak') - i.e. the match is diacritics-
+    and case-insensitive."""
+    from src.models.documents import CoverLetter
+    from src.services.cover_letter_generator import _strip_duplicate_signoff
+
+    cover = CoverLetter(
+        salutation="Vážený pane,",
+        paragraphs=[
+            "Mám zájem o pozici QA inženýra.",
+            "Těším se na další kroky.\nS pozdravem, Jan Novak",
+        ],
+        closing="S pozdravem,",
+        signature="Jan Novák",
+    )
+    cleaned = _strip_duplicate_signoff(cover)
+    last = cleaned.paragraphs[-1]
+    assert "S pozdravem" not in last
+    assert "Jan Novak" not in last
+    assert "Těším" in last
+
+
+def test_strip_role_heading_drops_cover_letter_for_role_at_company():
+    """The user explicitly asked for the cover letter NOT to start with
+    'Cover letter for X at Y' - the role and company already live on the
+    resume + the filename. The first paragraph must survive everything
+    after the heading line."""
+    from src.models.documents import CoverLetter
+    from src.models.job import JobPosting
+    from src.services.cover_letter_generator import _strip_role_heading
+
+    cover = CoverLetter(
+        salutation="Dear Hiring Team,",
+        paragraphs=[
+            "Cover letter for QA Engineer at ACME Inc.\nI am writing to express my interest...",
+            "I look forward to discussing the next steps.",
+        ],
+        closing="Best regards,",
+        signature="Jan Novak",
+    )
+    job = JobPosting(title="QA Engineer", company="ACME Inc.")
+    cleaned = _strip_role_heading(cover, job)
+    assert not cleaned.paragraphs[0].lower().startswith("cover letter for")
+    assert "I am writing to express my interest" in cleaned.paragraphs[0]
+
+
+def test_cover_letter_md_does_not_contain_role_heading_after_export(
+    tmp_path: Path, fake_provider, sample_job_text, sample_cv_text
+):
+    """End-to-end: even if the AI emits a role heading, the saved
+    markdown must never start with 'Cover letter -' / 'Cover letter for'."""
+    package = _build_package(fake_provider, sample_job_text, sample_cv_text)
+    summary = export_package(package, tmp_path)
+    md = summary.paths.cover_letter_md.read_text(encoding="utf-8")
+    first_line = md.lstrip().split("\n", 1)[0]
+    assert "Cover letter for" not in md
+    assert not first_line.startswith("# Cover letter")
+    # The exported markdown must open with the salutation directly.
+    assert (
+        first_line.startswith("Dear ")
+        or first_line.startswith("Vážený")
+        or first_line.startswith("Vážená")
+        or first_line.startswith("Hello")
+    ), f"Unexpected first line: {first_line!r}"
+
+
+# ---------------------------------------------------------------------------
+# Cover letter styled HTML (used by the PDF renderer)
+# ---------------------------------------------------------------------------
+def test_cover_letter_styled_html_uses_chosen_theme_accent():
+    """The cover letter HTML must pick up the resume theme's accent
+    colour so the resume + cover PDFs ship as a visually consistent
+    pair."""
+    from src.models.documents import CoverLetter
+    from src.services.document_themes import (
+        RESUME_THEMES,
+        cover_letter_to_styled_html,
+    )
+
+    cover = CoverLetter(
+        salutation="Dear Hiring Team,",
+        paragraphs=["I am writing about the QA role."],
+        closing="Best regards,",
+        signature="Jane Doe",
+    )
+    candidate = CandidateProfile(full_name="Jane Doe", contact_email="jane@example.com")
+
+    burgundy = RESUME_THEMES["burgundy_serif"]
+    indigo = RESUME_THEMES["indigo_header"]
+
+    html_b = cover_letter_to_styled_html(cover, candidate, theme=burgundy)
+    html_i = cover_letter_to_styled_html(cover, candidate, theme=indigo)
+    assert burgundy.accent.lower() in html_b.lower()
+    assert indigo.accent.lower() in html_i.lower()
+    assert "Jane Doe" in html_b
+    assert "I am writing about the QA role." in html_b
+    # No role-in-title heading on top of the styled cover letter either.
+    assert "Cover letter for" not in html_b
+    # The two themes must produce visibly different markup.
+    assert html_b != html_i

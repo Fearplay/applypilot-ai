@@ -92,6 +92,12 @@ class WorkflowState:
     #: by the user via :class:`OutputLanguageDialog` right before document
     #: generation. Defaults to the UI language until the dialog asks.
     docs_language: str = "en"
+    #: Visual theme slug picked in :class:`OutputLanguageDialog`. The dialog
+    #: returns either ``random`` (sentinel) or a concrete slug from
+    #: :data:`src.services.document_themes.RESUME_THEMES`. The window
+    #: resolves the random sentinel to a real slug before storing so every
+    #: subsequent renderer call uses the same look (preview, save, export).
+    docs_theme: str = "teal_sidebar"
     #: Profile entry ids (experience / education) the user picked 'No - skip
     #: it' on inside a discrepancy clarifying question. Filtered out of the
     #: candidate profile right before resume / cover / interview / gap calls
@@ -864,14 +870,30 @@ class MainWindow(QMainWindow):
         evidence = self._state.evidence
         assert job and candidate and match_report and evidence
 
-        # Ask the user which language the documents should be in. Default to
-        # the previously chosen language (or the UI language on first run).
+        # Ask the user which language + visual theme the documents should be
+        # in. Default to the previously chosen language (or the UI language on
+        # first run); the dialog persists the theme via preferences so the
+        # next run pre-selects the same look.
         default_lang = self._state.docs_language or get_language()
-        dlg = OutputLanguageDialog(default=default_lang, parent=self)
+        dlg = OutputLanguageDialog(
+            default=default_lang,
+            default_theme=self._state.docs_theme,
+            parent=self,
+        )
         if dlg.exec() != QDialog.Accepted:
             return
         docs_lang = dlg.selected_language()
         self._state.docs_language = docs_lang
+        # Resolve the random sentinel right here so every downstream
+        # consumer (preview, save, export) renders with the same theme.
+        from ..services.document_themes import RANDOM_THEME_SLUG, resolve_theme
+
+        picked_theme = dlg.selected_theme()
+        if picked_theme == RANDOM_THEME_SLUG:
+            resolved = resolve_theme(RANDOM_THEME_SLUG)
+            self._state.docs_theme = resolved.slug
+        else:
+            self._state.docs_theme = resolve_theme(picked_theme).slug
 
         # Last-chance modal: list every experience/education/certification/
         # course row currently scheduled for removal so the user can rescue
@@ -1050,6 +1072,7 @@ class MainWindow(QMainWindow):
             evidence=list(self._state.evidence.items) if self._state.evidence else [],
             generated_at=datetime.now(),
             output_language=self._state.docs_language or get_language(),
+            output_theme=self._state.docs_theme or "teal_sidebar",
         )
         self._state.package = package
         self._docs_page.load_package(package)
@@ -1066,18 +1089,28 @@ class MainWindow(QMainWindow):
             )
             return
         package = self._state.package
+        theme_slug = self._state.docs_theme or package.output_theme or "teal_sidebar"
 
         def work():
-            paths = export_package(package, self._settings.output_dir)
+            summary = export_package(package, self._settings.output_dir, theme=theme_slug)
             entry = append_history(self._settings.output_dir, package)
-            return paths, entry
+            return summary, entry
 
         self.statusBar().showMessage(t("status.exporting"))
 
         def on_done(result):
-            paths, entry = result
+            summary, entry = result
+            paths = summary.paths
             self.statusBar().clearMessage()
-            self._docs_page.set_status(t("docs.saved_status", path=paths.folder))
+            # Surface the PDF-skipped warning inline in the docs page
+            # status bar so the user knows the markdown / docx still
+            # shipped but PDFs need Chrome / Edge to be reachable.
+            if summary.pdf_skipped:
+                self._docs_page.set_status(
+                    t("docs.pdf.skipped", path=paths.folder)
+                )
+            else:
+                self._docs_page.set_status(t("docs.saved_status", path=paths.folder))
             self._sidebar.set_status("documents", t("chip.saved"), "done")
             self._sidebar.set_activity(
                 t("status.score_summary", n=9, folder=Path(paths.folder).name)
