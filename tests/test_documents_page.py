@@ -165,3 +165,89 @@ def test_reset_to_single_problem_clears_extras(qt_app):
 
     assert len(panel._rows) == 1
     assert panel._rows[0].text() == ""
+
+
+# ---------------------------------------------------------------------------
+# Tab-aware refine routing (resume vs cover letter vs blocked)
+# ---------------------------------------------------------------------------
+from src.gui.documents_page import DocumentsPage  # noqa: E402
+
+
+def _select_tab(page: DocumentsPage, widget) -> None:
+    idx = page._tabs.indexOf(widget)
+    assert idx >= 0
+    page._tabs.setCurrentIndex(idx)
+
+
+def test_refine_on_resume_tab_emits_resume_target(qt_app):
+    """Pressing Refine while the Tailored Resume tab is active must
+    fire ``refine_requested(feedback, "resume")`` so the main window
+    routes the AI call to the resume pipeline.
+    """
+    page = DocumentsPage()
+    received: list[tuple[str, str]] = []
+    page.refine_requested.connect(lambda fb, tgt: received.append((fb, tgt)))
+
+    _select_tab(page, page._resume_edit)
+    page._refine_panel._rows[0]._editor.setPlainText("Tighten the summary.")
+    page._refine_panel._on_submit()
+
+    assert received == [("1) Tighten the summary.", "resume")]
+
+
+def test_refine_on_modern_resume_tab_also_routes_to_resume(qt_app):
+    """The Modern Resume tab is just a styled view of the same data, so
+    refining there must still hit the resume pipeline (not no-op)."""
+    page = DocumentsPage()
+    received: list[tuple[str, str]] = []
+    page.refine_requested.connect(lambda fb, tgt: received.append((fb, tgt)))
+
+    _select_tab(page, page._modern_resume)
+    page._refine_panel._rows[0]._editor.setPlainText("Use forest theme.")
+    page._refine_panel._on_submit()
+
+    assert received and received[0][1] == "resume"
+
+
+def test_refine_on_cover_letter_tab_emits_cover_letter_target(qt_app):
+    page = DocumentsPage()
+    received: list[tuple[str, str]] = []
+    page.refine_requested.connect(lambda fb, tgt: received.append((fb, tgt)))
+
+    _select_tab(page, page._cover_edit)
+    page._refine_panel._rows[0]._editor.setPlainText("Less formal opening.")
+    page._refine_panel._on_submit()
+
+    assert received == [("1) Less formal opening.", "cover_letter")]
+
+
+def test_refine_on_unsupported_tab_blocks_and_shows_hint(qt_app):
+    """Match-report / interview / gap / evidence tabs do not have an
+    AI refine flow yet. Pressing Refine there must NOT silently rewrite
+    the resume - it must show the 'switch tabs' hint and emit nothing.
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    info_calls: list[tuple] = []
+
+    def _capture(*args, **kwargs):
+        info_calls.append(args)
+        return QMessageBox.Ok
+
+    original = QMessageBox.information
+    QMessageBox.information = staticmethod(_capture)  # type: ignore[assignment]
+    try:
+        page = DocumentsPage()
+        received: list[tuple[str, str]] = []
+        page.refine_requested.connect(
+            lambda fb, tgt: received.append((fb, tgt))
+        )
+        # Match report tab is read-only and has no AI refine flow.
+        _select_tab(page, page._match_edit)
+        page._refine_panel._rows[0]._editor.setPlainText("Boost the score.")
+        page._refine_panel._on_submit()
+    finally:
+        QMessageBox.information = original  # type: ignore[assignment]
+
+    assert received == []
+    assert info_calls, "expected the 'switch tabs' info dialog to fire"

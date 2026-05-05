@@ -58,6 +58,9 @@ _STRINGS: dict[str, dict[str, str]] = {
         "sidebar.workflow": "WORKFLOW",
         "sidebar.activity": "Activity",
         "sidebar.activity.ready": "Ready",
+        "sidebar.cost": "SESSION COST",
+        "sidebar.cost.usage": "{calls} calls - {tokens} tokens",
+        "sidebar.cost.total": "~${cost:.2f} this session",
         "sidebar.setup.title": "Setup",
         "sidebar.setup.subtitle": "Job + profile inputs",
         "sidebar.match.title": "Match report",
@@ -221,6 +224,24 @@ _STRINGS: dict[str, dict[str, str]] = {
         ),
         "docs.modern.open": "Open in browser",
         "docs.modern.export_html": "Export styled HTML",
+        "docs.modern.change_layout": "Change layout",
+        "docs.modern.change_layout.tip": (
+            "Rotate the structural CSS (two-column, banner, minimal). "
+            "The colour palette stays the same so you see the layout "
+            "swap without the colour distracting from it."
+        ),
+        "docs.modern.change_colour": "Change colour",
+        "docs.modern.change_colour.tip": (
+            "Rotate only the colour palette. The layout stays the "
+            "same so the resume's overall shape is preserved."
+        ),
+        "docs.modern.nothing_to_restyle.title": "Generate the resume first",
+        "docs.modern.nothing_to_restyle.body": (
+            "There is no resume on screen yet. Run an analysis or load "
+            "a saved one before changing layout or colour."
+        ),
+        "docs.modern.changed_layout": "Layout swapped to {name}.",
+        "docs.modern.changed_colour": "Colour swapped to {name}.",
         "docs.back": "Back to match",
         "docs.export_md": "Export MD",
         "docs.export_html": "Export HTML",
@@ -256,9 +277,19 @@ _STRINGS: dict[str, dict[str, str]] = {
         # ---- refine panel ----
         "docs.refine.placeholder": "Tell the AI what's missing or wrong...",
         "docs.refine.button": "Refine with AI",
-        "docs.refine.status": "Refining resume with your feedback...",
-        "docs.refine.done": "Resume refined successfully",
+        "docs.refine.status": "Refining the active document with your feedback...",
+        "docs.refine.status.resume": "Refining resume with your feedback...",
+        "docs.refine.status.cover_letter": (
+            "Refining cover letter with your feedback..."
+        ),
+        "docs.refine.done": "Document refined successfully",
         "docs.refine.error": "Refinement failed: {error}",
+        "docs.refine.unsupported_tab.title": "Switch to Resume or Cover Letter",
+        "docs.refine.unsupported_tab.body": (
+            "The Refine with AI panel only rewrites the resume or the "
+            "cover letter. Switch to one of those tabs (Resume / Modern "
+            "Resume / Cover Letter) and try again."
+        ),
         "docs.refine.safety_added.explicit": (
             "Safety net re-added these positions you mentioned were "
             "missing: {labels}."
@@ -591,6 +622,9 @@ _STRINGS: dict[str, dict[str, str]] = {
         "sidebar.workflow": "POSTUP",
         "sidebar.activity": "Aktivita",
         "sidebar.activity.ready": "Připraveno",
+        "sidebar.cost": "NÁKLADY RELACE",
+        "sidebar.cost.usage": "{calls} volání - {tokens} tokenů",
+        "sidebar.cost.total": "~${cost:.2f} v této relaci",
         "sidebar.setup.title": "Nastavení",
         "sidebar.setup.subtitle": "Pozice + profil",
         "sidebar.match.title": "Shoda",
@@ -751,6 +785,24 @@ _STRINGS: dict[str, dict[str, str]] = {
         ),
         "docs.modern.open": "Otevřít v prohlížeči",
         "docs.modern.export_html": "Exportovat stylované HTML",
+        "docs.modern.change_layout": "Změnit vzhled",
+        "docs.modern.change_layout.tip": (
+            "Změní strukturu CSS (dvousloupcové, banner, minimalistické). "
+            "Barva zůstane stejná, takže uvidíš změnu rozvržení bez "
+            "rušivého přebarvení."
+        ),
+        "docs.modern.change_colour": "Změnit barvu",
+        "docs.modern.change_colour.tip": (
+            "Změní jen barevnou paletu. Rozvržení zůstane stejné, "
+            "takže životopis si zachová svůj tvar."
+        ),
+        "docs.modern.nothing_to_restyle.title": "Nejprve vygeneruj životopis",
+        "docs.modern.nothing_to_restyle.body": (
+            "Životopis ještě není na obrazovce. Spusť analýzu nebo "
+            "načti existující, než změníš rozvržení nebo barvu."
+        ),
+        "docs.modern.changed_layout": "Rozvržení změněno na {name}.",
+        "docs.modern.changed_colour": "Barva změněna na {name}.",
         "docs.back": "Zpět na shodu",
         "docs.export_md": "Export MD",
         "docs.export_html": "Export HTML",
@@ -784,9 +836,22 @@ _STRINGS: dict[str, dict[str, str]] = {
         ),
         "docs.refine.placeholder": "Napiš AI, co chybí nebo je špatně...",
         "docs.refine.button": "Upřesnit pomocí AI",
-        "docs.refine.status": "Upřesňuji životopis na základě tvé zpětné vazby...",
-        "docs.refine.done": "Životopis úspěšně upřesněn",
+        "docs.refine.status": "Upřesňuji aktivní dokument na základě tvé zpětné vazby...",
+        "docs.refine.status.resume": (
+            "Upřesňuji životopis na základě tvé zpětné vazby..."
+        ),
+        "docs.refine.status.cover_letter": (
+            "Upřesňuji motivační dopis na základě tvé zpětné vazby..."
+        ),
+        "docs.refine.done": "Dokument úspěšně upřesněn",
         "docs.refine.error": "Upřesnění selhalo: {error}",
+        "docs.refine.unsupported_tab.title": "Přepni na Životopis nebo Motivační dopis",
+        "docs.refine.unsupported_tab.body": (
+            "Panel Upřesnit pomocí AI přepisuje pouze životopis nebo "
+            "motivační dopis. Přepni se na některou z těchto záložek "
+            "(Životopis na míru / Moderní životopis / Motivační dopis) "
+            "a zkus to znovu."
+        ),
         "docs.refine.safety_added.explicit": (
             "Bezpečnostní vrstva doplnila tyto pozice, o kterých jsi "
             "psal/a, že chybí: {labels}."

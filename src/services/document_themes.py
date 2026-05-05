@@ -355,12 +355,172 @@ def detect_resume_language(resume: TailoredResume) -> str:
 # ---------------------------------------------------------------------------
 # Theme registry
 # ---------------------------------------------------------------------------
+# Two-axis split: a "theme" is the cross product of one LAYOUT (which CSS
+# builder runs) and one PALETTE (which colours + fonts that builder uses).
+# The user can ask the GUI to "change layout" without touching the
+# palette and vice-versa, which fixes the long-standing complaint that
+# the old "change style" button only ever swapped the colour.
 ThemeLayout = Literal[
     "two_column_sidebar",
     "single_column_serif",
     "single_column_minimal",
     "centered_header_band",
 ]
+
+#: All shipped layout slugs in their preferred display order. Used by
+#: :func:`pick_different_layout` to walk the universe of layouts when
+#: the user clicks "Change layout".
+LAYOUTS: tuple[ThemeLayout, ...] = (
+    "two_column_sidebar",
+    "single_column_serif",
+    "single_column_minimal",
+    "centered_header_band",
+)
+
+
+@dataclass(frozen=True)
+class Palette:
+    """The colour + typography half of a :class:`ResumeTheme`.
+
+    Decoupled from the layout so the user can flip palettes without
+    touching the structure of the document. Every palette ships with
+    a stable ``slug`` (used to round-trip through preferences),
+    localised display labels, the nine colour tokens the layouts read,
+    and the body / heading font stacks.
+    """
+
+    slug: str
+    display_name_en: str
+    display_name_cs: str
+    accent: str          # primary accent (sidebar / banner / heading colour)
+    accent_dark: str     # darker shade used for gradients / hover
+    accent_soft: str     # tint used for chip backgrounds / pills
+    on_accent: str       # text colour rendered on top of the accent
+    text_primary: str    # main body text colour
+    text_muted: str      # secondary text (period dates, captions)
+    rule: str            # border / underline colour for section headings
+    body_font: str       # CSS font-family stack for body text
+    heading_font: str    # CSS font-family stack for headings
+
+
+#: Eight palettes - the original six plus two fillers (graphite, plum) so
+#: every layout has at least two colour choices the picker can rotate
+#: between when the user clicks "Change colour".
+PALETTES: dict[str, Palette] = {
+    "teal": Palette(
+        slug="teal",
+        display_name_en="Teal",
+        display_name_cs="Teal",
+        accent="#0E7490",
+        accent_dark="#0F766E",
+        accent_soft="#7DD3FC",
+        on_accent="#FFFFFF",
+        text_primary="#0F172A",
+        text_muted="#64748B",
+        rule="#14B8A6",
+        body_font="'Inter','Segoe UI','Helvetica Neue',Arial,sans-serif",
+        heading_font="'Inter','Segoe UI','Helvetica Neue',Arial,sans-serif",
+    ),
+    "burgundy": Palette(
+        slug="burgundy",
+        display_name_en="Burgundy",
+        display_name_cs="Bordó",
+        accent="#7F1D1D",
+        accent_dark="#5B0F0F",
+        accent_soft="#FECACA",
+        on_accent="#FFFFFF",
+        text_primary="#1F1A18",
+        text_muted="#7B6F6A",
+        rule="#B91C1C",
+        body_font="'Source Sans 3','Segoe UI',Arial,sans-serif",
+        heading_font="'Playfair Display','Georgia','Times New Roman',serif",
+    ),
+    "slate": Palette(
+        slug="slate",
+        display_name_en="Slate",
+        display_name_cs="Slate",
+        accent="#1E293B",
+        accent_dark="#0F172A",
+        accent_soft="#CBD5E1",
+        on_accent="#FFFFFF",
+        text_primary="#0F172A",
+        text_muted="#64748B",
+        rule="#475569",
+        body_font="'Inter','Segoe UI','Helvetica Neue',Arial,sans-serif",
+        heading_font="'Inter','Segoe UI','Helvetica Neue',Arial,sans-serif",
+    ),
+    "forest": Palette(
+        slug="forest",
+        display_name_en="Forest",
+        display_name_cs="Lesní",
+        accent="#065F46",
+        accent_dark="#064E3B",
+        accent_soft="#A7F3D0",
+        on_accent="#FFFFFF",
+        text_primary="#111827",
+        text_muted="#4B5563",
+        rule="#10B981",
+        body_font="'Inter','Segoe UI','Helvetica Neue',Arial,sans-serif",
+        heading_font="'Inter','Segoe UI','Helvetica Neue',Arial,sans-serif",
+    ),
+    "indigo": Palette(
+        slug="indigo",
+        display_name_en="Indigo",
+        display_name_cs="Indigo",
+        accent="#3730A3",
+        accent_dark="#1E1B4B",
+        accent_soft="#C7D2FE",
+        on_accent="#FFFFFF",
+        text_primary="#1F2937",
+        text_muted="#6B7280",
+        rule="#6366F1",
+        body_font="'Inter','Segoe UI','Helvetica Neue',Arial,sans-serif",
+        heading_font="'Inter','Segoe UI','Helvetica Neue',Arial,sans-serif",
+    ),
+    "sunset": Palette(
+        slug="sunset",
+        display_name_en="Sunset",
+        display_name_cs="Západ slunce",
+        accent="#C2410C",
+        accent_dark="#9A3412",
+        accent_soft="#FED7AA",
+        on_accent="#FFFFFF",
+        text_primary="#1F2937",
+        text_muted="#57534E",
+        rule="#F97316",
+        body_font="'Inter','Segoe UI','Helvetica Neue',Arial,sans-serif",
+        heading_font="'Inter','Segoe UI','Helvetica Neue',Arial,sans-serif",
+    ),
+    # --- new fillers so every layout has at least 2 palette choices ---
+    "graphite": Palette(
+        slug="graphite",
+        display_name_en="Graphite",
+        display_name_cs="Grafit",
+        accent="#374151",
+        accent_dark="#1F2937",
+        accent_soft="#D1D5DB",
+        on_accent="#FFFFFF",
+        text_primary="#111827",
+        text_muted="#6B7280",
+        rule="#4B5563",
+        body_font="'Inter','Segoe UI','Helvetica Neue',Arial,sans-serif",
+        heading_font="'Inter','Segoe UI','Helvetica Neue',Arial,sans-serif",
+    ),
+    "plum": Palette(
+        slug="plum",
+        display_name_en="Plum",
+        display_name_cs="Švestka",
+        accent="#6B21A8",
+        accent_dark="#4C1D95",
+        accent_soft="#E9D5FF",
+        on_accent="#FFFFFF",
+        text_primary="#1F1A24",
+        text_muted="#6B5876",
+        rule="#9333EA",
+        body_font="'Inter','Segoe UI','Helvetica Neue',Arial,sans-serif",
+        heading_font="'Inter','Segoe UI','Helvetica Neue',Arial,sans-serif",
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -369,6 +529,12 @@ class ResumeTheme:
 
     The slug is the stable ID stored on disk + in user preferences;
     everything else is the palette + typography + layout knob.
+
+    ``layout_slug`` and ``palette_slug`` decompose the theme along its
+    two axes so :func:`pick_different_layout` /
+    :func:`pick_different_palette` can rotate one axis at a time. The
+    legacy ``layout`` field is preserved for the existing CSS builders
+    (which dispatch on it).
     """
 
     slug: str
@@ -384,6 +550,8 @@ class ResumeTheme:
     rule: str            # border / underline colour for section headings
     body_font: str       # CSS font-family stack for body text
     heading_font: str    # CSS font-family stack for headings
+    layout_slug: str = ""    # axis-1 identity, used by pick_different_layout
+    palette_slug: str = ""   # axis-2 identity, used by pick_different_palette
 
     def display_name(self, lang: str) -> str:
         code = (lang or "en").strip().lower()
@@ -392,98 +560,86 @@ class ResumeTheme:
         return self.display_name_en
 
 
+def _theme_from_axes(
+    slug: str,
+    *,
+    display_name_en: str,
+    display_name_cs: str,
+    layout_slug: ThemeLayout,
+    palette_slug: str,
+) -> ResumeTheme:
+    """Build a :class:`ResumeTheme` from a (layout, palette) pair.
+
+    Used by :data:`RESUME_THEMES` to assemble the shipped presets and by
+    :func:`pick_different_layout` / :func:`pick_different_palette` so a
+    layout / palette swap stays fully consistent (typography stack and
+    colour tokens both come from the same palette object).
+    """
+    palette = PALETTES[palette_slug]
+    return ResumeTheme(
+        slug=slug,
+        display_name_en=display_name_en,
+        display_name_cs=display_name_cs,
+        layout=layout_slug,
+        accent=palette.accent,
+        accent_dark=palette.accent_dark,
+        accent_soft=palette.accent_soft,
+        on_accent=palette.on_accent,
+        text_primary=palette.text_primary,
+        text_muted=palette.text_muted,
+        rule=palette.rule,
+        body_font=palette.body_font,
+        heading_font=palette.heading_font,
+        layout_slug=layout_slug,
+        palette_slug=palette_slug,
+    )
+
+
 # Six visually distinct presets. ``teal_sidebar`` is the original look so the
-# old "I want my CV to look like before" path always works.
+# old "I want my CV to look like before" path always works. The slug names
+# are preserved verbatim so saved analyses on disk still load.
 RESUME_THEMES: dict[str, ResumeTheme] = {
-    "teal_sidebar": ResumeTheme(
-        slug="teal_sidebar",
+    "teal_sidebar": _theme_from_axes(
+        "teal_sidebar",
         display_name_en="Teal Two-Column",
         display_name_cs="Teal dvousloupcový",
-        layout="two_column_sidebar",
-        accent="#0E7490",
-        accent_dark="#0F766E",
-        accent_soft="#7DD3FC",
-        on_accent="#FFFFFF",
-        text_primary="#0F172A",
-        text_muted="#64748B",
-        rule="#14B8A6",
-        body_font="'Inter','Segoe UI','Helvetica Neue',Arial,sans-serif",
-        heading_font="'Inter','Segoe UI','Helvetica Neue',Arial,sans-serif",
+        layout_slug="two_column_sidebar",
+        palette_slug="teal",
     ),
-    "burgundy_serif": ResumeTheme(
-        slug="burgundy_serif",
+    "burgundy_serif": _theme_from_axes(
+        "burgundy_serif",
         display_name_en="Burgundy Serif",
         display_name_cs="Bordó serif",
-        layout="single_column_serif",
-        accent="#7F1D1D",
-        accent_dark="#5B0F0F",
-        accent_soft="#FECACA",
-        on_accent="#FFFFFF",
-        text_primary="#1F1A18",
-        text_muted="#7B6F6A",
-        rule="#B91C1C",
-        body_font="'Source Sans 3','Segoe UI',Arial,sans-serif",
-        heading_font="'Playfair Display','Georgia','Times New Roman',serif",
+        layout_slug="single_column_serif",
+        palette_slug="burgundy",
     ),
-    "slate_minimal": ResumeTheme(
-        slug="slate_minimal",
+    "slate_minimal": _theme_from_axes(
+        "slate_minimal",
         display_name_en="Slate Minimal",
         display_name_cs="Slate minimal",
-        layout="single_column_minimal",
-        accent="#1E293B",
-        accent_dark="#0F172A",
-        accent_soft="#CBD5E1",
-        on_accent="#FFFFFF",
-        text_primary="#0F172A",
-        text_muted="#64748B",
-        rule="#475569",
-        body_font="'Inter','Segoe UI','Helvetica Neue',Arial,sans-serif",
-        heading_font="'Inter','Segoe UI','Helvetica Neue',Arial,sans-serif",
+        layout_slug="single_column_minimal",
+        palette_slug="slate",
     ),
-    "forest_sidebar": ResumeTheme(
-        slug="forest_sidebar",
+    "forest_sidebar": _theme_from_axes(
+        "forest_sidebar",
         display_name_en="Forest Two-Column",
         display_name_cs="Lesní dvousloupcový",
-        layout="two_column_sidebar",
-        accent="#065F46",
-        accent_dark="#064E3B",
-        accent_soft="#A7F3D0",
-        on_accent="#FFFFFF",
-        text_primary="#111827",
-        text_muted="#4B5563",
-        rule="#10B981",
-        body_font="'Inter','Segoe UI','Helvetica Neue',Arial,sans-serif",
-        heading_font="'Inter','Segoe UI','Helvetica Neue',Arial,sans-serif",
+        layout_slug="two_column_sidebar",
+        palette_slug="forest",
     ),
-    "indigo_header": ResumeTheme(
-        slug="indigo_header",
+    "indigo_header": _theme_from_axes(
+        "indigo_header",
         display_name_en="Indigo Header",
         display_name_cs="Indigo hlavička",
-        layout="centered_header_band",
-        accent="#3730A3",
-        accent_dark="#1E1B4B",
-        accent_soft="#C7D2FE",
-        on_accent="#FFFFFF",
-        text_primary="#1F2937",
-        text_muted="#6B7280",
-        rule="#6366F1",
-        body_font="'Inter','Segoe UI','Helvetica Neue',Arial,sans-serif",
-        heading_font="'Inter','Segoe UI','Helvetica Neue',Arial,sans-serif",
+        layout_slug="centered_header_band",
+        palette_slug="indigo",
     ),
-    "sunset_modern": ResumeTheme(
-        slug="sunset_modern",
+    "sunset_modern": _theme_from_axes(
+        "sunset_modern",
         display_name_en="Sunset Two-Column",
         display_name_cs="Západ slunce",
-        layout="two_column_sidebar",
-        accent="#C2410C",
-        accent_dark="#9A3412",
-        accent_soft="#FED7AA",
-        on_accent="#FFFFFF",
-        text_primary="#1F2937",
-        text_muted="#57534E",
-        rule="#F97316",
-        body_font="'Inter','Segoe UI','Helvetica Neue',Arial,sans-serif",
-        heading_font="'Inter','Segoe UI','Helvetica Neue',Arial,sans-serif",
+        layout_slug="two_column_sidebar",
+        palette_slug="sunset",
     ),
 }
 
@@ -501,17 +657,146 @@ def theme_choices() -> list[ResumeTheme]:
     return list(RESUME_THEMES.values())
 
 
+# Memoise on-the-fly themes built by ``pick_different_*`` so the same
+# (layout, palette) pair always resolves to the same :class:`ResumeTheme`
+# slug. Without this, two clicks of "Change palette" on a layout that
+# already has a preset palette would generate two distinct synthetic
+# slugs, which downstream code (preferences, exports) would then have
+# to deduplicate.
+_DERIVED_THEMES: dict[tuple[str, str], ResumeTheme] = {}
+
+
+def _theme_for_axes(layout_slug: str, palette_slug: str) -> ResumeTheme:
+    """Return the (possibly synthetic) theme for ``(layout, palette)``.
+
+    Walks :data:`RESUME_THEMES` first to honour any preset name (e.g.
+    ``("two_column_sidebar", "teal")`` resolves to the existing
+    ``teal_sidebar`` slug). Otherwise builds a derived theme on the fly
+    and stamps it with a deterministic ``{layout}_{palette}`` slug.
+    """
+    for theme in RESUME_THEMES.values():
+        if theme.layout_slug == layout_slug and theme.palette_slug == palette_slug:
+            return theme
+    cache_key = (layout_slug, palette_slug)
+    cached = _DERIVED_THEMES.get(cache_key)
+    if cached is not None:
+        return cached
+    palette = PALETTES[palette_slug]
+    derived_slug = f"{layout_slug}__{palette_slug}"
+    layout_label_en = layout_slug.replace("_", " ").title()
+    layout_label_cs = layout_label_en  # English fallback for derived slugs
+    derived = _theme_from_axes(
+        derived_slug,
+        display_name_en=f"{palette.display_name_en} {layout_label_en}",
+        display_name_cs=f"{palette.display_name_cs} {layout_label_cs}",
+        layout_slug=layout_slug,  # type: ignore[arg-type]
+        palette_slug=palette_slug,
+    )
+    _DERIVED_THEMES[cache_key] = derived
+    return derived
+
+
+def pick_different_layout(
+    current: ResumeTheme, *, rng: random.Random | None = None
+) -> ResumeTheme:
+    """Return a theme with a DIFFERENT layout than ``current``.
+
+    Keeps the same palette when possible so the swap reads as a layout
+    change rather than a colour change. Falls back to a random palette
+    only when the target layout has no preset using the current
+    palette - which never happens today because every palette / layout
+    combo can be synthesised on the fly via :func:`_theme_for_axes`.
+
+    ``rng`` lets tests inject a seeded :class:`random.Random` for
+    deterministic assertions; production calls let it default to the
+    module-level random.
+    """
+    chooser = rng or random
+    other_layouts = [layout for layout in LAYOUTS if layout != current.layout_slug]
+    if not other_layouts:
+        return current
+    target_layout = chooser.choice(other_layouts)
+    palette_slug = current.palette_slug or _guess_palette_slug(current)
+    return _theme_for_axes(target_layout, palette_slug)
+
+
+def pick_different_palette(
+    current: ResumeTheme, *, rng: random.Random | None = None
+) -> ResumeTheme:
+    """Return a theme with the SAME layout but a different palette.
+
+    Mirrors :func:`pick_different_layout`: keep the structure, change
+    the colour. The user's "Change colour" button hits this; the result
+    re-renders the modern-resume preview without changing the
+    document's overall shape.
+    """
+    chooser = rng or random
+    current_palette = current.palette_slug or _guess_palette_slug(current)
+    other_palettes = [
+        slug for slug in PALETTES.keys() if slug != current_palette
+    ]
+    if not other_palettes:
+        return current
+    target_palette = chooser.choice(other_palettes)
+    layout_slug = current.layout_slug or current.layout
+    return _theme_for_axes(layout_slug, target_palette)
+
+
+def _guess_palette_slug(theme: ResumeTheme) -> str:
+    """Best-effort palette identity for legacy themes.
+
+    Old saved analyses can carry a hand-built :class:`ResumeTheme`
+    without a ``palette_slug``; in that case we walk :data:`PALETTES`
+    looking for the matching ``accent`` colour. Falls back to the
+    first palette so the picker can still rotate.
+    """
+    if theme.palette_slug:
+        return theme.palette_slug
+    for slug, palette in PALETTES.items():
+        if palette.accent.lower() == (theme.accent or "").lower():
+            return slug
+    # Last resort: just pick any palette so callers can keep going.
+    return next(iter(PALETTES))
+
+
 def resolve_theme(slug: str | None) -> ResumeTheme:
     """Turn a stored slug (possibly ``random`` or empty) into a real theme.
 
-    ``random`` picks any concrete theme uniformly. Unknown slugs collapse
-    to the default theme so loading an old / hand-edited preference never
-    crashes the renderer.
+    ``random`` rotates the architecture: it picks one of the four
+    :data:`LAYOUTS` AND one of the eight :data:`PALETTES` independently
+    and combines them via :func:`_theme_for_axes`. The user's complaint
+    was that the old random branch only sampled the six preset
+    :data:`RESUME_THEMES`, three of which share the ``two_column_sidebar``
+    layout, so half the random picks landed on the same architecture and
+    the result felt "always the first PDF". With 4 layouts x 8 palettes
+    the random pool is 32 distinct combos, and every layout has the same
+    1/4 chance regardless of how many palettes ship for it.
+
+    Synthetic ``{layout}__{palette}`` slugs (produced by random picks
+    and the ``Change layout`` / ``Change colour`` buttons) round-trip
+    through this resolver so a saved analysis re-opens with the same
+    architecture it was generated with - otherwise random would silently
+    collapse back to the default theme on the next load.
+
+    Unknown slugs collapse to the default theme so loading an old /
+    hand-edited preference never crashes the renderer.
     """
     code = (slug or "").strip().lower() or DEFAULT_THEME_SLUG
     if code == RANDOM_THEME_SLUG:
-        return random.choice(list(RESUME_THEMES.values()))
-    return RESUME_THEMES.get(code, RESUME_THEMES[DEFAULT_THEME_SLUG])
+        layout_slug = random.choice(list(LAYOUTS))
+        palette_slug = random.choice(list(PALETTES.keys()))
+        return _theme_for_axes(layout_slug, palette_slug)
+    preset = RESUME_THEMES.get(code)
+    if preset is not None:
+        return preset
+    # Synthetic slug: ``{layout}__{palette}``. Both halves must be known
+    # for the resolve to succeed; otherwise we fall back to the default
+    # theme so a typo / retired layout never crashes the renderer.
+    if "__" in code:
+        layout_part, _, palette_part = code.partition("__")
+        if layout_part in LAYOUTS and palette_part in PALETTES:
+            return _theme_for_axes(layout_part, palette_part)  # type: ignore[arg-type]
+    return RESUME_THEMES[DEFAULT_THEME_SLUG]
 
 
 # ---------------------------------------------------------------------------
@@ -659,19 +944,74 @@ def _certifications_html(resume: TailoredResume, theme: ResumeTheme) -> str:
 # ---------------------------------------------------------------------------
 # Layout-specific CSS
 # ---------------------------------------------------------------------------
+# Shared base CSS used by every layout. Two responsibilities:
+#
+# 1. Page sizing.  Both screen preview and print keep ``.page`` at a
+#    297mm minimum so the rendered HTML looks like an A4 sheet AND - in
+#    print - the .page element is at least one full A4 page tall, which
+#    means the layout-level page background (e.g. the teal stripe in
+#    ``two_column_sidebar``) actually covers the whole printed page.
+#    The earlier ``min-height:auto !important`` print override let
+#    short CVs collapse the .page to content-height, which dragged the
+#    sidebar stripe up with it and left a wide white slab below the
+#    content.  Multi-page CVs are unaffected because ``min-height`` only
+#    sets a floor: when content is taller than 297mm the .page element
+#    grows naturally and pages get split by the browser as usual.
+#
+# 2. Page breaks.  Every layout-level CSS (``_two_column_css``, ``_single
+#    _column_serif_css``, etc.) inherits these defaults so jobs / projects
+#    / education rows never split mid-section across pages, and section
+#    headings never end up alone at the bottom of a page above an empty
+#    block.  ``orphans`` / ``widows`` keeps prose paragraphs readable.
 _CSS_BASE_PAGE = """
 *{box-sizing:border-box;margin:0;padding:0}
 @page{size:A4;margin:0}
-@media print{body{background:#fff}.page{box-shadow:none;margin:0}}
+@media print{
+  html,body{background:#fff !important}
+  .page{box-shadow:none !important;margin:0}
+  .sidebar,.banner,.header{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
+.job,.project-card,.edu-row,.cert-item,.lang-row,.skill-group,.skills-row .group,.skills-grid .group,.lang-list .lang,section.block{break-inside:avoid;page-break-inside:avoid}
+.job-header,.edu-row .top{break-inside:avoid;page-break-inside:avoid}
+h1,h2,h3{break-after:avoid-page;page-break-after:avoid}
+p,li{orphans:2;widows:2}
 """.strip()
 
 
 def _two_column_css(theme: ResumeTheme) -> str:
+    # The teal stripe is painted as TWO complementary layers so the
+    # left-hand column reads as a continuous brand colour on every
+    # printed page, including the last one where the .page element
+    # may end mid-page:
+    #
+    # 1. ``.page`` carries the gradient as a tiled background sized
+    #    73mm x 297mm with ``repeat-y``.  In screen preview (where
+    #    ``min-height:297mm`` keeps .page exactly one A4 page tall)
+    #    this paints the visible teal stripe.  In print, the same
+    #    tile keeps painting on every A4 page worth of element content
+    #    so multi-page CVs get teal on page 1 and page 2 down to where
+    #    the .page element ends.
+    #
+    # 2. ``.bg-stripe`` is an empty positioned div in the HTML.  In
+    #    screen mode it is hidden.  In print, it becomes
+    #    ``position:fixed`` with ``height:100vh`` and Chromium's print
+    #    layout repeats it on every paginated A4 page (per the CSS
+    #    Paged Media spec, fixed-positioned elements appear in every
+    #    page box).  This guarantees the teal column extends all the
+    #    way to the bottom of the LAST page even when the .page
+    #    element ended early - the case the user complained about
+    #    (huge white slab below the sidebar on page 2).
+    #
+    # ``.sidebar`` stays transparent so it never repaints on top of
+    # either layer; its content (name, contact, skills) sits over the
+    # tiled / fixed teal background and reads identically.
     return f"""
 {_CSS_BASE_PAGE}
 html,body{{font-family:{theme.body_font};color:{theme.text_primary};background:#F8FAFC;line-height:1.45;font-size:10.5pt}}
-.page{{max-width:210mm;min-height:297mm;margin:0 auto;background:#FFFFFF;box-shadow:0 8px 30px rgba(15,23,42,0.08);display:grid;grid-template-columns:73mm 1fr}}
-.sidebar{{background:linear-gradient(180deg,{theme.accent} 0%,{theme.accent_dark} 100%);color:{theme.on_accent};padding:14mm 9mm 12mm 9mm}}
+.bg-stripe{{display:none}}
+@media print{{.bg-stripe{{display:block;position:fixed;top:0;left:50%;transform:translateX(-105mm);width:73mm;height:100vh;background:linear-gradient(180deg,{theme.accent} 0%,{theme.accent_dark} 100%);-webkit-print-color-adjust:exact;print-color-adjust:exact;z-index:-1}}}}
+.page{{max-width:210mm;min-height:297mm;margin:0 auto;box-shadow:0 8px 30px rgba(15,23,42,0.08);display:grid;grid-template-columns:73mm 1fr;align-items:stretch;background-color:#FFFFFF;background-image:linear-gradient(180deg,{theme.accent} 0%,{theme.accent_dark} 100%);background-size:73mm 297mm;background-repeat:repeat-y;background-position:top left;position:relative}}
+.sidebar{{color:{theme.on_accent};padding:14mm 9mm 12mm 9mm;position:relative;z-index:1}}
 .sidebar h1{{font-family:{theme.heading_font};font-size:20pt;line-height:1.1;font-weight:800;letter-spacing:-0.02em;margin-bottom:3mm}}
 .sb-section{{margin-top:7mm}}
 .sb-section h3{{font-size:9pt;text-transform:uppercase;letter-spacing:0.18em;font-weight:700;color:{theme.accent_soft};border-bottom:1px solid rgba(255,255,255,0.35);padding-bottom:1.5mm;margin-bottom:3mm}}
@@ -926,7 +1266,12 @@ def _render_two_column(
         main_parts.append(_certifications_html(resume, theme))
     main = f'<main class="main">{"".join(main_parts)}</main>'
 
-    return f'<div class="page">{sidebar}{main}</div>'
+    # ``.bg-stripe`` is a print-only fixed-position teal column that
+    # Chromium repeats on every paginated A4 page.  See ``_two_column_css``
+    # for the rationale - this guarantees the sidebar stripe extends to
+    # the bottom of the last page even when the .page element ended
+    # early because the right column had less content than 297mm.
+    return f'<div class="bg-stripe"></div><div class="page">{sidebar}{main}</div>'
 
 
 def _flat_contact_bar(
@@ -1390,11 +1735,16 @@ def cover_letter_to_styled_html(
 __all__ = [
     "ResumeTheme",
     "ThemeLayout",
+    "Palette",
+    "PALETTES",
+    "LAYOUTS",
     "RESUME_THEMES",
     "RANDOM_THEME_SLUG",
     "DEFAULT_THEME_SLUG",
     "theme_choices",
     "resolve_theme",
+    "pick_different_layout",
+    "pick_different_palette",
     "resume_labels",
     "detect_resume_language",
     "tailored_resume_to_styled_html",

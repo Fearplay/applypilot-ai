@@ -68,4 +68,50 @@ def name_slug(full_name: str, *, fallback: str = "applicant", max_len: int = 80)
     return slug or fallback
 
 
-__all__ = ["slugify", "name_slug"]
+def pretty_name_slug(
+    full_name: str, *, fallback: str = "Applicant", max_len: int = 80
+) -> str:
+    """Title-case underscored slug for user-facing filenames.
+
+    Recruiters expect ``Juraj_Acsay_CV.pdf`` rather than the all-lowercase
+    ``juraj_acsay_cv.pdf``. This is the helper for the artefact filenames
+    the user actually emails out; :func:`name_slug` (lowercase) keeps its
+    historical meaning for folder hashes / internal IDs that other code
+    paths still rely on.
+
+    Examples
+    --------
+    >>> pretty_name_slug("Jan Novak")
+    'Jan_Novak'
+    >>> pretty_name_slug("Jan Novák")
+    'Jan_Novak'
+    >>> pretty_name_slug("Anna-Maria von Bismarck")
+    'Anna_Maria_Von_Bismarck'
+    >>> pretty_name_slug("j. doe")
+    'J_Doe'
+    >>> pretty_name_slug("")
+    'Applicant'
+    """
+    if not full_name:
+        return fallback
+    normalised = unicodedata.normalize("NFKD", full_name)
+    ascii_text = normalised.encode("ascii", errors="ignore").decode("ascii").lower()
+    tokens = _NAME_TOKEN.findall(ascii_text)
+    if not tokens:
+        return fallback
+    capitalised = [tok.capitalize() for tok in tokens]
+    slug = "_".join(capitalised)
+    if len(slug) > max_len:
+        out: list[str] = []
+        running = 0
+        for tok in capitalised:
+            extra = len(tok) + (1 if out else 0)
+            if running + extra > max_len:
+                break
+            out.append(tok)
+            running += extra
+        slug = "_".join(out) if out else slug[:max_len].rstrip("_")
+    return slug or fallback
+
+
+__all__ = ["slugify", "name_slug", "pretty_name_slug"]

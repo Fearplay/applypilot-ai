@@ -23,7 +23,7 @@ import unicodedata
 
 from ..ai.base import BaseAIProvider
 from ..models.candidate import CandidateProfile
-from ..models.documents import CoverLetter
+from ..models.documents import CoverLetter, RefinedCoverLetter
 from ..models.job import JobPosting
 from ..models.match import AnswersBundle
 
@@ -231,8 +231,52 @@ def generate_cover_letter(
     return cover
 
 
+def refine_cover_letter(
+    provider: BaseAIProvider,
+    current_cover_letter: CoverLetter,
+    feedback: str,
+    job: JobPosting,
+    candidate: CandidateProfile,
+    answers: AnswersBundle | None = None,
+    output_language: str = "en",
+    previous_explanation: str = "",
+) -> RefinedCoverLetter:
+    """Re-generate the cover letter with the user's feedback applied.
+
+    Routes the request through the provider's
+    :meth:`refine_cover_letter` and then runs the same deterministic
+    safety nets the initial-generation path uses. The user's "Refine
+    with AI" button on the cover-letter tab calls this function (the
+    documents page resolves the active tab to ``"cover_letter"`` before
+    emitting the signal).
+
+    Returns a :class:`RefinedCoverLetter` carrying the cleaned cover
+    letter plus the AI's 1-3 sentence ``explanation`` so the GUI can
+    show what changed under the refine panel - same shape as the
+    resume refine flow.
+    """
+    answers = answers or AnswersBundle()
+    refined = provider.refine_cover_letter(
+        current_cover_letter,
+        feedback,
+        job,
+        candidate,
+        answers,
+        output_language=output_language,
+        previous_explanation=previous_explanation,
+    )
+    # Apply the same safety nets the initial-generation path uses so a
+    # refined draft can never reintroduce a "Cover letter for X at Y"
+    # heading or a duplicate sign-off, regardless of which provider
+    # produced the refined output.
+    refined.cover_letter = _strip_role_heading(refined.cover_letter, job)
+    refined.cover_letter = _strip_duplicate_signoff(refined.cover_letter)
+    return refined
+
+
 __all__ = [
     "generate_cover_letter",
+    "refine_cover_letter",
     "_strip_duplicate_signoff",
     "_strip_role_heading",
 ]

@@ -8,6 +8,7 @@ from ..models.candidate import CandidateProfile, GitHubProject
 from ..models.documents import (
     CoverLetter,
     InterviewQuestion,
+    RefinedCoverLetter,
     RefinedResume,
     SkillGap,
     TailoredResume,
@@ -149,6 +150,31 @@ class BaseAIProvider(ABC):
         without this context, the AI would treat the bare 'ano' as a
         no-op and frustrate the user who is clearly responding to a
         question.
+        """
+
+    # -------------------------------------------------------- refine cover
+    @abstractmethod
+    def refine_cover_letter(
+        self,
+        current_cover_letter: CoverLetter,
+        feedback: str,
+        job: JobPosting,
+        candidate: CandidateProfile,
+        answers: AnswersBundle,
+        output_language: str = "en",
+        previous_explanation: str = "",
+    ) -> RefinedCoverLetter:
+        """Re-generate the cover letter incorporating the user's feedback.
+
+        Returns a :class:`RefinedCoverLetter` carrying the updated
+        :class:`CoverLetter` (full replacement, never a diff) plus a 1-3
+        sentence ``explanation`` (in ``output_language``) so the GUI can
+        show what changed under the refine panel.
+
+        ``previous_explanation`` carries the AI's note from the last
+        refine round, mirroring :meth:`refine_resume`, so a bare "ano"
+        / "yes" reply is interpreted as agreement with the suggestion
+        the model made in that earlier note instead of becoming a no-op.
         """
 
 

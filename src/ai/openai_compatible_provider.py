@@ -31,6 +31,7 @@ from ..models.candidate import CandidateProfile, GitHubProject
 from ..models.documents import (
     CoverLetter,
     InterviewQuestion,
+    RefinedCoverLetter,
     RefinedResume,
     SkillGap,
     TailoredResume,
@@ -581,6 +582,24 @@ class OpenAICompatibleProvider(BaseAIProvider):
             previous_explanation=previous_explanation,
         )
         return self._run("refine_resume", system, user, RefinedResume)
+
+    def refine_cover_letter(
+        self,
+        current_cover_letter: CoverLetter,
+        feedback: str,
+        job: JobPosting,
+        candidate: CandidateProfile,
+        answers: AnswersBundle,
+        output_language: str = "en",
+        previous_explanation: str = "",
+    ) -> RefinedCoverLetter:
+        system = prompts.system_prompt_for(job.role_type)
+        user = prompts.refine_cover_letter_user_prompt(
+            current_cover_letter, feedback, job, candidate, answers,
+            output_language=output_language,
+            previous_explanation=previous_explanation,
+        )
+        return self._run("refine_cover_letter", system, user, RefinedCoverLetter)
 
 
 __all__ = [
