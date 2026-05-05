@@ -293,6 +293,10 @@ class DocumentsPage(QWidget):
         self._tabs.addTab(self._evidence_edit, t("docs.tab.evidence"))
         body_layout.addWidget(self._tabs, stretch=1)
         self._modern_resume_html: str = ""
+        # Candidate name pulled from the loaded package - used to generate
+        # the per-tab default filename (jan_novak_cv.md / jan_novak_cover
+        # _letter.md) so manual exports match the bulk save naming.
+        self._candidate_name: str = ""
 
         self._refine_panel = _RefinePanel()
         self._refine_panel.refine_clicked.connect(self._on_refine_clicked)
@@ -419,10 +423,19 @@ class DocumentsPage(QWidget):
                 t("docs.modern.nothing_export_body"),
             )
             return
+        try:
+            from ..utils.slugify import name_slug
+            default_name = (
+                f"{name_slug(self._candidate_name)}_cv.html"
+                if self._candidate_name
+                else "tailored_resume.html"
+            )
+        except ImportError:  # pragma: no cover - safety
+            default_name = "tailored_resume.html"
         path, _ = QFileDialog.getSaveFileName(
             self,
             t("docs.modern.export_title"),
-            "tailored_resume.html",
+            default_name,
             t("docs.modern.export_filter"),
         )
         if not path:
@@ -452,6 +465,20 @@ class DocumentsPage(QWidget):
     # ----------------------------------------------------------- public
     def load_package(self, package: GeneratedApplicationPackage) -> None:
         docs_lang = package.output_language or "en"
+        # Honour the visual theme picked in the OutputLanguageDialog so the
+        # preview tab looks identical to what the PDF will print on save.
+        # ``output_theme`` is set on the package by MainWindow once the
+        # random sentinel has been resolved to a concrete slug.
+        docs_theme = getattr(package, "output_theme", "") or "teal_sidebar"
+        # Cache the candidate name so per-tab manual exports default to
+        # the same {slug}_cv / {slug}_cover_letter filenames the bulk
+        # save uses. Falls back to the candidate profile when the resume
+        # name is empty (rare but possible during refine churn).
+        self._candidate_name = (
+            package.tailored_resume.name
+            or package.candidate_profile.full_name
+            or ""
+        )
         self._resume_edit.setPlainText(
             resume_to_markdown(package.tailored_resume, output_language=docs_lang)
         )
@@ -460,6 +487,7 @@ class DocumentsPage(QWidget):
                 package.tailored_resume,
                 package.candidate_profile,
                 output_language=docs_lang,
+                theme=docs_theme,
             )
         )
         self._cover_edit.setPlainText(cover_letter_to_markdown(package.cover_letter))
@@ -527,12 +555,35 @@ class DocumentsPage(QWidget):
         return self._tabs.tabText(self._tabs.currentIndex())
 
     # ----------------------------------------------------------- exporters
+    def _default_export_basename(self) -> str:
+        """Pick the default filename stem for the current tab.
+
+        Resume / cover-letter tabs use the candidate slug
+        (``jan_novak_cv``, ``jan_novak_cover_letter``) so manual single
+        -doc exports match the bulk Save-analysis naming the user
+        explicitly asked for. Other tabs (match report, interview prep,
+        skill gap) keep their tab-name based default because there is
+        no candidate-personalised name for those.
+        """
+        try:
+            from ..utils.slugify import name_slug
+        except ImportError:  # pragma: no cover - safety
+            name_slug = lambda name: "applicant"  # type: ignore[assignment]
+        idx = self._tabs.currentIndex()
+        widget = self._tabs.widget(idx)
+        if widget is self._resume_edit and self._candidate_name:
+            return f"{name_slug(self._candidate_name)}_cv"
+        if widget is self._cover_edit and self._candidate_name:
+            return f"{name_slug(self._candidate_name)}_cover_letter"
+        return self.current_tab_name().lower().replace(" ", "_")
+
     def _export_current_md(self) -> None:
         tab = self.current_tab_name()
+        basename = self._default_export_basename()
         path, _ = QFileDialog.getSaveFileName(
             self,
             t("docs.export.md_title", tab=tab),
-            f"{tab.lower().replace(' ', '_')}.md",
+            f"{basename}.md",
             t("docs.export.md_filter"),
         )
         if not path:
@@ -550,10 +601,11 @@ class DocumentsPage(QWidget):
             QMessageBox.critical(self, t("docs.error.export_missing_dep"), str(exc))
             return
         tab = self.current_tab_name()
+        basename = self._default_export_basename()
         path, _ = QFileDialog.getSaveFileName(
             self,
             t("docs.export.html_title", tab=tab),
-            f"{tab.lower().replace(' ', '_')}.html",
+            f"{basename}.html",
             t("docs.export.html_filter"),
         )
         if not path:
@@ -571,10 +623,11 @@ class DocumentsPage(QWidget):
 
     def _export_current_docx(self) -> None:
         tab = self.current_tab_name()
+        basename = self._default_export_basename()
         path, _ = QFileDialog.getSaveFileName(
             self,
             t("docs.export.docx_title", tab=tab),
-            f"{tab.lower().replace(' ', '_')}.docx",
+            f"{basename}.docx",
             t("docs.export.docx_filter"),
         )
         if not path:

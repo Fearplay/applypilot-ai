@@ -38,6 +38,16 @@ class GeneratedApplicationPackage(BaseModel):
             "stay consistent regardless of the source CV/LinkedIn language mix."
         ),
     )
+    output_theme: str = Field(
+        default="teal_sidebar",
+        description=(
+            "Slug of the visual theme picked for the styled resume / cover "
+            "letter HTML + PDF (one of "
+            "`src.services.document_themes.RESUME_THEMES`). The user can ask "
+            "for `random` in the dialog; that gets resolved to a concrete "
+            "slug at save time so the package always remembers a real theme."
+        ),
+    )
 
 
 __all__ = ["GeneratedApplicationPackage"]
