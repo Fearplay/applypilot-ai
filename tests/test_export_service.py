@@ -100,33 +100,35 @@ def test_export_writes_every_user_doc(tmp_path: Path, fake_provider, sample_job_
 def test_export_uses_candidate_slug_for_resume_and_cover_filenames(
     tmp_path: Path, fake_provider, sample_job_text, sample_cv_text
 ):
-    """Every resume / cover letter artefact is named ``{slug}_cv.*`` /
-    ``{slug}_cover_letter.*`` so a recruiter who downloads the folder
-    sees who the documents belong to without opening them. Match report
-    / interview prep / skill gap / evidence keep generic filenames.
+    """Every resume / cover letter artefact is named ``{Slug}_CV.*`` /
+    ``{Slug}_Cover_Letter.*`` so a recruiter who downloads the folder
+    sees who the documents belong to without opening them. The user
+    explicitly asked for the Title_Case form (``Juraj_Acsay_CV.pdf``);
+    every supporting report is renamed to the same Title_Case scheme so
+    every file in the folder follows one convention.
     """
     package = _build_package(fake_provider, sample_job_text, sample_cv_text)
     summary = export_package(package, tmp_path)
     paths = summary.paths
 
-    from src.utils.slugify import name_slug
+    from src.utils.slugify import pretty_name_slug
 
-    expected_slug = name_slug(
+    expected_slug = pretty_name_slug(
         package.tailored_resume.name or package.candidate_profile.full_name
     )
-    assert paths.resume_md.name == f"{expected_slug}_cv.md"
-    assert paths.resume_docx.name == f"{expected_slug}_cv.docx"
-    assert paths.resume_html.name == f"{expected_slug}_cv.html"
-    assert paths.resume_pdf.name == f"{expected_slug}_cv.pdf"
-    assert paths.cover_letter_md.name == f"{expected_slug}_cover_letter.md"
-    assert paths.cover_letter_docx.name == f"{expected_slug}_cover_letter.docx"
-    assert paths.cover_letter_pdf.name == f"{expected_slug}_cover_letter.pdf"
-    # Non-personal artefacts stay on their stable names so re-opens never
-    # have to scan for "the match report".
-    assert paths.match_report_md.name == "match_report.md"
-    assert paths.interview_md.name == "interview_questions.md"
-    assert paths.skill_gap_md.name == "skill_gap_plan.md"
-    assert paths.evidence_json.name == "evidence_report.json"
+    assert paths.resume_md.name == f"{expected_slug}_CV.md"
+    assert paths.resume_docx.name == f"{expected_slug}_CV.docx"
+    assert paths.resume_html.name == f"{expected_slug}_CV.html"
+    assert paths.resume_pdf.name == f"{expected_slug}_CV.pdf"
+    assert paths.cover_letter_md.name == f"{expected_slug}_Cover_Letter.md"
+    assert paths.cover_letter_docx.name == f"{expected_slug}_Cover_Letter.docx"
+    assert paths.cover_letter_pdf.name == f"{expected_slug}_Cover_Letter.pdf"
+    # Non-personal artefacts now share the same Title_Case styling so
+    # the folder reads like one consistent set of documents.
+    assert paths.match_report_md.name == "Match_Report.md"
+    assert paths.interview_md.name == "Interview_Questions.md"
+    assert paths.skill_gap_md.name == "Skill_Gap_Plan.md"
+    assert paths.evidence_json.name == "Evidence_Report.json"
 
 
 def test_export_skips_pdf_when_renderer_unavailable(
@@ -608,6 +610,33 @@ def test_name_slug_handles_diacritics_and_separators(input_name, expected):
     assert name_slug(input_name) == expected
 
 
+@pytest.mark.parametrize(
+    "input_name, expected",
+    [
+        ("Jan Novak", "Jan_Novak"),
+        ("Jan Novák", "Jan_Novak"),
+        ("Jana Nováková", "Jana_Novakova"),
+        ("Anna-Maria von Bismarck", "Anna_Maria_Von_Bismarck"),
+        ("    spaced   name   ", "Spaced_Name"),
+        ("Juraj Ačšay", "Juraj_Acsay"),
+        ("", "Applicant"),
+        ("###", "Applicant"),
+        ("j. doe", "J_Doe"),
+    ],
+)
+def test_pretty_name_slug_titlecases_and_folds_diacritics(input_name, expected):
+    """Recruiter-facing filenames must read like ``Juraj_Acsay_CV.pdf``.
+
+    ``pretty_name_slug`` is the helper :func:`build_export_paths` uses
+    to stamp the user-shared CV / cover letter / supporting reports;
+    capitalised tokens joined by underscores match the convention the
+    user explicitly asked for.
+    """
+    from src.utils.slugify import pretty_name_slug
+
+    assert pretty_name_slug(input_name) == expected
+
+
 # ---------------------------------------------------------------------------
 # Visual themes
 # ---------------------------------------------------------------------------
@@ -656,18 +685,101 @@ def test_every_theme_renders_with_unique_accent_colour():
     assert len(seen_accents) >= 6
 
 
-def test_random_theme_returns_one_of_the_registered_themes():
-    """The ``random`` slug must always resolve to a real theme - never
-    leak as a literal string into the rendered HTML."""
+def test_random_theme_resolves_to_a_real_layout_and_palette():
+    """The ``random`` slug must always resolve to a concrete theme whose
+    layout AND palette come from the shipped registries - never leak the
+    literal ``random`` string into the rendered HTML.
+
+    The user explicitly asked for ``random`` to rotate the architecture
+    (not just the colour), so the resolver now picks a random
+    :data:`LAYOUTS` entry and a random :data:`PALETTES` entry
+    independently. Synthetic ``{layout}__{palette}`` slugs that fall
+    outside :data:`RESUME_THEMES` are valid output as long as both
+    halves are real.
+    """
     from src.services.document_themes import (
+        LAYOUTS,
+        PALETTES,
         RESUME_THEMES,
         resolve_theme,
     )
 
     for _ in range(10):
         chosen = resolve_theme("random")
-        assert chosen.slug in RESUME_THEMES
         assert chosen.slug != "random"
+        # Either a shipped preset OR a deterministic synthetic combo
+        # whose two halves both exist in their respective registries.
+        if chosen.slug in RESUME_THEMES:
+            continue
+        layout_part, _, palette_part = chosen.slug.partition("__")
+        assert layout_part in LAYOUTS, chosen.slug
+        assert palette_part in PALETTES, chosen.slug
+
+
+def test_random_theme_rotates_layout_architecture():
+    """``random`` must visit at least two different layout architectures
+    across a small sample of picks - otherwise it has silently collapsed
+    back to "always the first PDF" behaviour the user complained about.
+
+    Deterministic via a seeded :class:`random.Random` so the test is
+    flake-free (the resolver itself uses the module-level random, but
+    we patch it for the duration of the test).
+    """
+    import random as _random
+
+    from src.services import document_themes
+    from src.services.document_themes import resolve_theme
+
+    real_random = document_themes.random
+    document_themes.random = _random.Random(7)
+    try:
+        layouts_seen = {resolve_theme("random").layout_slug for _ in range(8)}
+    finally:
+        document_themes.random = real_random
+
+    # With 4 layouts and 8 draws, the probability of all draws landing
+    # on the same layout is (1/4)**7 ~= 0.006%. Asserting >= 2 is a
+    # robust signal that rotation actually happens.
+    assert len(layouts_seen) >= 2, layouts_seen
+
+
+def test_resolve_theme_round_trips_synthetic_slugs():
+    """A synthetic ``{layout}__{palette}`` slug (produced by random or by
+    the Change-layout / Change-colour buttons) must resolve back to the
+    same layout + palette so reopening a saved analysis renders it
+    identically. Without this guard, every random pick would silently
+    snap to the default theme on the next package load."""
+    from src.services.document_themes import (
+        DEFAULT_THEME_SLUG,
+        RESUME_THEMES,
+        _theme_for_axes,
+        resolve_theme,
+    )
+
+    synthetic = _theme_for_axes("single_column_serif", "indigo")
+    assert synthetic.slug not in RESUME_THEMES, "test-data sanity check"
+    assert synthetic.slug != DEFAULT_THEME_SLUG
+
+    round_tripped = resolve_theme(synthetic.slug)
+    assert round_tripped.slug == synthetic.slug
+    assert round_tripped.layout_slug == "single_column_serif"
+    assert round_tripped.palette_slug == "indigo"
+
+
+def test_resolve_theme_falls_back_to_default_for_garbage_synthetic_slug():
+    """An ill-formed ``{layout}__{palette}`` slug (typo, retired layout)
+    must collapse to the default theme rather than blowing up the render
+    pipeline - the resolver is a hot path through which every saved
+    package travels."""
+    from src.services.document_themes import (
+        DEFAULT_THEME_SLUG,
+        RESUME_THEMES,
+        resolve_theme,
+    )
+
+    chosen = resolve_theme("not_a_layout__not_a_palette")
+    assert chosen.slug == DEFAULT_THEME_SLUG
+    assert chosen is RESUME_THEMES[DEFAULT_THEME_SLUG]
 
 
 def test_unknown_theme_slug_falls_back_to_default():
@@ -680,18 +792,279 @@ def test_unknown_theme_slug_falls_back_to_default():
     assert chosen.slug == DEFAULT_THEME_SLUG
 
 
+@pytest.mark.parametrize(
+    "preset_slug",
+    [
+        "teal_sidebar",
+        "burgundy_serif",
+        "slate_minimal",
+        "forest_sidebar",
+        "indigo_header",
+        "sunset_modern",
+    ],
+)
+def test_pick_different_layout_changes_layout_keeps_palette(preset_slug):
+    """The user pressed "Change layout" - the result MUST change the
+    layout while keeping (when possible) the same palette so the user
+    sees the structure flip without the colour rotating away."""
+    import random as _random
+
+    from src.services.document_themes import (
+        RESUME_THEMES,
+        pick_different_layout,
+    )
+
+    starting = RESUME_THEMES[preset_slug]
+    rng = _random.Random(42)
+    rotated = pick_different_layout(starting, rng=rng)
+    assert rotated.layout_slug != starting.layout_slug
+    # Same palette family rides along - that's the whole point of the
+    # split: structure changes, colour does not.
+    assert rotated.palette_slug == starting.palette_slug
+    # The rotated theme must still render cleanly (palette colour still
+    # present in the output CSS).
+    assert rotated.accent.lower() == starting.accent.lower()
+
+
+@pytest.mark.parametrize(
+    "preset_slug",
+    [
+        "teal_sidebar",
+        "burgundy_serif",
+        "slate_minimal",
+        "forest_sidebar",
+        "indigo_header",
+        "sunset_modern",
+    ],
+)
+def test_pick_different_palette_changes_palette_keeps_layout(preset_slug):
+    """The user pressed "Change colour" - the result MUST change the
+    palette while keeping the same layout so the document keeps its
+    overall shape."""
+    import random as _random
+
+    from src.services.document_themes import (
+        RESUME_THEMES,
+        pick_different_palette,
+    )
+
+    starting = RESUME_THEMES[preset_slug]
+    rng = _random.Random(42)
+    rotated = pick_different_palette(starting, rng=rng)
+    assert rotated.layout_slug == starting.layout_slug
+    assert rotated.palette_slug != starting.palette_slug
+    # Different accent colour - the user can see the swap visually.
+    assert rotated.accent.lower() != starting.accent.lower()
+
+
+def test_pick_different_palette_renders_full_html_for_synthetic_combos():
+    """When the user rotates the palette into a combo we don't ship as
+    a preset (e.g. ``two_column_sidebar`` + ``graphite``), the resulting
+    synthetic theme must still render the full styled HTML, with the new
+    accent colour landing in the CSS so the modern preview reflects it.
+    """
+    from src.models.documents import TailoredResume
+    from src.models.candidate import CandidateProfile
+    from src.services.document_themes import (
+        RESUME_THEMES,
+        pick_different_palette,
+        tailored_resume_to_styled_html,
+    )
+
+    starting = RESUME_THEMES["teal_sidebar"]
+    # Force the rotate to land on the "graphite" filler palette so we
+    # exercise the synthetic-theme code path explicitly.
+    rotated = starting
+    for _ in range(64):
+        rotated = pick_different_palette(rotated)
+        if rotated.palette_slug == "graphite":
+            break
+    assert rotated.palette_slug == "graphite", (
+        "expected pick_different_palette to eventually land on the "
+        "graphite filler"
+    )
+    # The synthetic theme isn't in RESUME_THEMES, so we pass it as the
+    # explicit ResumeTheme instance instead of by slug.
+    resume = TailoredResume(
+        name="Jan Novak",
+        professional_summary="Tester.",
+        technical_skills=["Python"],
+    )
+    candidate = CandidateProfile(full_name="Jan Novak")
+    html = tailored_resume_to_styled_html(
+        resume, candidate, output_language="en", theme=rotated
+    )
+    assert rotated.accent.lower() in html.lower()
+    assert "page-break-inside:avoid" in html.replace(" ", "")
+
+
+def test_themes_emit_print_friendly_break_rules():
+    """Every styled-resume HTML carries the page-break overrides that
+    keep multi-page rows from being split mid-section, and the
+    ``.page`` element keeps a full-A4 minimum height so layout-level
+    page backgrounds (e.g. the teal sidebar stripe) cover the whole
+    printed page even when the CV's content is short.
+
+    Concretely:
+    * ``.page`` carries a ``min-height:297mm`` floor that survives into
+      print (no ``min-height:auto`` print override) so a short CV does
+      not collapse the sidebar to content-height and leak white space
+      below the content area.
+    * Row-level elements (``.job``, ``.project-card``, ``.edu-row``)
+      must carry ``page-break-inside:avoid`` so a project never gets
+      split between two pages mid-row.
+    """
+    from src.services.document_themes import (
+        RESUME_THEMES,
+        cover_letter_to_styled_html,
+        tailored_resume_to_styled_html,
+    )
+
+    resume = TailoredResume(
+        name="Jan Novak",
+        professional_summary="Tester.",
+        technical_skills=["Python"],
+        experience=[
+            ResumeSection(
+                title="Senior",
+                subtitle="Co",
+                bullets=[ResumeBullet(text="Did stuff.")],
+            )
+        ],
+    )
+    candidate = CandidateProfile(full_name="Jan Novak")
+
+    for slug in RESUME_THEMES:
+        html = tailored_resume_to_styled_html(
+            resume, candidate, output_language="en", theme=slug
+        )
+        compact = html.replace(" ", "")
+        assert "min-height:297mm" in compact, slug
+        # The buggy print override that collapsed short CVs must NOT
+        # ship - regression net for the "huge teal-gap on page 2" bug.
+        assert "min-height:auto!important" not in compact, slug
+        assert "page-break-inside:avoid" in compact, slug
+        assert "break-inside:avoid" in compact, slug
+        assert "print-color-adjust:exact" in compact, slug
+
+    # Cover letter inherits the same base CSS, so the overrides ship
+    # there too - users print the cover letter through the same renderer.
+    from src.models.documents import CoverLetter
+
+    cover_html = cover_letter_to_styled_html(
+        CoverLetter(
+            salutation="Dear",
+            paragraphs=["Body."],
+            closing="Best",
+            signature="Jan",
+        ),
+        candidate,
+        theme="teal_sidebar",
+    )
+    cover_compact = cover_html.replace(" ", "")
+    assert "min-height:297mm" in cover_compact
+    assert "min-height:auto!important" not in cover_compact
+    assert "page-break-inside:avoid" in cover_compact
+
+
+def test_two_column_sidebar_paints_full_height_page_stripe():
+    """Every sidebar-layout theme must ship two complementary teal
+    layers so the accent column reads as a continuous brand colour on
+    every printed page, including the LAST one where the .page element
+    may end mid-page:
+
+    1. ``.page`` carries the gradient as a tiled background
+       (``background-size:73mm 297mm`` + ``background-repeat:repeat-y``)
+       so screen preview and print page 1 paint a clean teal stripe.
+    2. ``.bg-stripe`` is a print-only ``position:fixed`` element that
+       Chromium repeats on every paginated A4 page, so the teal column
+       extends to the bottom of the last page even when the .page
+       element ended early.
+
+    Regression net for the user-reported "big white slab on page 2"
+    bug - the previous print-only ``align-self:start`` rule made the
+    sidebar collapse to its content height. The two-layer approach
+    guarantees the stripe never collapses again.
+    """
+    from src.services.document_themes import (
+        RESUME_THEMES,
+        tailored_resume_to_styled_html,
+    )
+
+    resume = TailoredResume(
+        name="Jan Novak",
+        professional_summary="Tester.",
+        technical_skills=["Python", "Playwright"],
+        experience=[
+            ResumeSection(
+                title="Senior",
+                subtitle="Co",
+                bullets=[ResumeBullet(text="Did stuff.")],
+            )
+        ],
+    )
+    candidate = CandidateProfile(full_name="Jan Novak")
+
+    sidebar_slugs = [
+        slug
+        for slug, theme in RESUME_THEMES.items()
+        if theme.layout_slug == "two_column_sidebar"
+    ]
+    assert sidebar_slugs, "test sanity: at least one sidebar preset must ship"
+
+    for slug in sidebar_slugs:
+        html = tailored_resume_to_styled_html(
+            resume, candidate, output_language="en", theme=slug
+        )
+        compact = html.replace(" ", "").replace("\n", "")
+        # Layer 1: tiled .page background covers screen + first pages.
+        assert "background-size:73mm297mm" in compact, slug
+        assert "background-repeat:repeat-y" in compact, slug
+        assert "background-position:topleft" in compact, slug
+        # Layer 2: print-only fixed-position stripe must be in the HTML
+        # AND in the @media print CSS so Chromium repeats it on every
+        # page box (covers the bottom-of-last-page case).
+        assert '<divclass="bg-stripe">' in compact, slug
+        assert ".bg-stripe{display:none}" in compact, slug
+        assert "position:fixed" in compact, slug
+        assert "height:100vh" in compact, slug
+        # The buggy print-only collapse rules MUST stay deleted.
+        assert "align-self:start" not in compact, slug
+        assert "align-items:start" not in compact, slug
+        # The accent gradient still belongs in the page background so
+        # the teal stripe shows the brand colour, not a static grey.
+        assert RESUME_THEMES[slug].accent.lower() in html.lower(), slug
+
+
 def test_export_persists_resolved_theme_on_package(
     tmp_path: Path, fake_provider, sample_job_text, sample_cv_text
 ):
     """The exporter must persist the resolved theme slug on the package
     so reopening a saved analysis renders it identically. ``random``
-    should be resolved to a concrete slug before storage."""
+    should be resolved to a concrete slug before storage - either one
+    of the shipped presets OR a synthetic ``{layout}__{palette}`` combo
+    that the resolver can read back deterministically."""
     package = _build_package(fake_provider, sample_job_text, sample_cv_text)
     export_package(package, tmp_path, theme="random")
     assert package.output_theme != "random"
 
-    from src.services.document_themes import RESUME_THEMES
-    assert package.output_theme in RESUME_THEMES
+    from src.services.document_themes import (
+        LAYOUTS,
+        PALETTES,
+        RESUME_THEMES,
+        resolve_theme,
+    )
+
+    if package.output_theme in RESUME_THEMES:
+        # Shipped preset - already a stable slug.
+        return
+    layout_part, _, palette_part = package.output_theme.partition("__")
+    assert layout_part in LAYOUTS, package.output_theme
+    assert palette_part in PALETTES, package.output_theme
+    # And the slug must round-trip through the resolver so a re-opened
+    # package produces the same theme it was saved with.
+    round_tripped = resolve_theme(package.output_theme)
+    assert round_tripped.slug == package.output_theme
 
 
 # ---------------------------------------------------------------------------
@@ -791,6 +1164,85 @@ def test_cover_letter_md_does_not_contain_role_heading_after_export(
         or first_line.startswith("Vážená")
         or first_line.startswith("Hello")
     ), f"Unexpected first line: {first_line!r}"
+
+
+def test_refine_cover_letter_runs_safety_nets_on_refined_output():
+    """When the AI returns a refined cover letter, the deterministic
+    safety nets (role-heading stripper + duplicate sign-off cleanup)
+    must run on the result so a refined draft can never reintroduce a
+    'Cover letter for X at Y' heading or trail a 'Best regards, <Name>'
+    line inside the body. The user complained that refining the cover
+    letter only rewrote the resume - this test pins the new contract
+    AND its safety nets down at the service level.
+    """
+    from src.ai.fake_provider import FakeAIProvider
+    from src.models.candidate import CandidateProfile
+    from src.models.documents import (
+        CoverLetter,
+        RefinedCoverLetter,
+    )
+    from src.models.job import JobPosting
+    from src.models.match import AnswersBundle
+    from src.services.cover_letter_generator import refine_cover_letter
+
+    class _SneakyProvider(FakeAIProvider):
+        """Returns a refined cover letter that deliberately includes a
+        role heading + a duplicate sign-off so the safety nets have
+        something to strip."""
+
+        def refine_cover_letter(
+            self, current_cover_letter, feedback, job, candidate, answers,
+            output_language="en", previous_explanation="",
+        ):
+            cover = CoverLetter(
+                salutation="Dear Hiring Manager,",
+                paragraphs=[
+                    "Cover letter for QA Engineer at ACME Inc.\n"
+                    "I am writing to express my interest in this role.",
+                    (
+                        "I would welcome a chance to discuss the next steps. "
+                        "Best regards, Jan Novak"
+                    ),
+                ],
+                closing="Best regards,",
+                signature="Jan Novak",
+            )
+            return RefinedCoverLetter(
+                cover_letter=cover, explanation="Reworked the opening."
+            )
+
+    starting = CoverLetter(
+        salutation="Dear Hiring Manager,",
+        paragraphs=["Old paragraph."],
+        closing="Best regards,",
+        signature="Jan Novak",
+    )
+    job = JobPosting(title="QA Engineer", company="ACME Inc.")
+    candidate = CandidateProfile(full_name="Jan Novak")
+
+    refined = refine_cover_letter(
+        _SneakyProvider(),
+        starting,
+        feedback="Open with concrete impact.",
+        job=job,
+        candidate=candidate,
+        answers=AnswersBundle(),
+        output_language="en",
+    )
+
+    assert refined.explanation == "Reworked the opening."
+    # Role heading was scrubbed.
+    assert not refined.cover_letter.paragraphs[0].lower().startswith(
+        "cover letter for"
+    )
+    # Duplicate sign-off in the body was removed - the structured
+    # ``closing`` + ``signature`` survive instead.
+    last_para = refined.cover_letter.paragraphs[-1].lower()
+    assert "best regards" not in last_para or last_para.endswith(
+        "next steps."
+    )
+    assert refined.cover_letter.closing == "Best regards,"
+    assert refined.cover_letter.signature == "Jan Novak"
 
 
 # ---------------------------------------------------------------------------

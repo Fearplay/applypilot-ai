@@ -23,6 +23,7 @@ from ..models.candidate import (
 from ..models.documents import (
     CoverLetter,
     InterviewQuestion,
+    RefinedCoverLetter,
     RefinedResume,
     ResumeBullet,
     ResumeSection,
@@ -861,6 +862,38 @@ class FakeAIProvider(BaseAIProvider):
                  "appended to the summary verbatim."
         )
         return RefinedResume(resume=current_resume, explanation=explanation)
+
+    # -------------------------------------------------------- refine cover
+    def refine_cover_letter(
+        self,
+        current_cover_letter: CoverLetter,
+        feedback: str,
+        job: JobPosting,
+        candidate: CandidateProfile,
+        answers: AnswersBundle,
+        output_language: str = "en",
+        previous_explanation: str = "",
+    ) -> RefinedCoverLetter:
+        note = f"[Demo] User feedback received: {feedback[:200]}"
+        # Prepend a clearly-marked demo note so the user sees that their
+        # feedback was registered while making it obvious no real AI call
+        # actually rewrote the cover letter (offline / fake mode).
+        if current_cover_letter.paragraphs:
+            current_cover_letter.paragraphs[0] = (
+                f"{note}\n\n{current_cover_letter.paragraphs[0]}"
+            )
+        else:
+            current_cover_letter.paragraphs = [note]
+        explanation = (
+            "[Demo] Žádné skutečné AI volání neproběhlo - "
+            "zpětná vazba byla jen vložena na začátek dopisu."
+            if (output_language or "en").lower() == "cs"
+            else "[Demo] No real AI call was made - your feedback was "
+                 "prepended to the cover letter verbatim."
+        )
+        return RefinedCoverLetter(
+            cover_letter=current_cover_letter, explanation=explanation
+        )
 
     # ----------------------------------------------------------- cover ltr
     def generate_cover_letter(

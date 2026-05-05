@@ -87,17 +87,22 @@ def _first_existing(folder: Path, *candidates: str) -> Path:
 def _resolve_resume_paths(folder: Path) -> tuple[Path, Path]:
     """Locate the resume markdown + styled HTML for an analysis folder.
 
-    Tries the new ``{slug}_cv.{md,html}`` filenames first (so re-opened
-    folders saved with the new naming convention always win), then falls
-    back to the legacy ``tailored_resume.{md,html}`` so analyses
+    Tries the new ``{Slug}_CV.{md,html}`` Title_Case filenames first (so
+    re-opened folders saved with the latest convention always win), then
+    falls back to the previous ``{slug}_cv.{md,html}`` lowercase form,
+    and finally to the legacy ``tailored_resume.{md,html}`` so analyses
     exported by older builds keep loading without manual rename.
     """
     md_candidates = ["tailored_resume.md"]
     html_candidates = ["tailored_resume.html"]
-    for child in folder.glob("*_cv.md"):
-        md_candidates.insert(0, child.name)
-    for child in folder.glob("*_cv.html"):
-        html_candidates.insert(0, child.name)
+    # Glob is case-insensitive on Windows but case-sensitive on Linux/macOS;
+    # explicitly probe both casings so saved folders open from either OS.
+    for pattern in ("*_CV.md", "*_cv.md"):
+        for child in folder.glob(pattern):
+            md_candidates.insert(0, child.name)
+    for pattern in ("*_CV.html", "*_cv.html"):
+        for child in folder.glob(pattern):
+            html_candidates.insert(0, child.name)
     return (
         _first_existing(folder, *md_candidates),
         _first_existing(folder, *html_candidates),
@@ -106,8 +111,9 @@ def _resolve_resume_paths(folder: Path) -> tuple[Path, Path]:
 
 def _resolve_cover_md(folder: Path) -> Path:
     candidates = ["cover_letter.md"]
-    for child in folder.glob("*_cover_letter.md"):
-        candidates.insert(0, child.name)
+    for pattern in ("*_Cover_Letter.md", "*_cover_letter.md"):
+        for child in folder.glob(pattern):
+            candidates.insert(0, child.name)
     return _first_existing(folder, *candidates)
 
 
@@ -115,14 +121,16 @@ def load_package_files(folder: str | Path) -> StoredAnalysis:
     """Read back the markdown / HTML / JSON artefacts of a past analysis.
 
     Tolerates partial folders (returns empty strings for missing files)
-    AND tolerates either filename convention - the new
-    ``{slug}_cv.*`` / ``{slug}_cover_letter.*`` names produced from this
-    release on, or the legacy ``tailored_resume.*`` / ``cover_letter.*``
-    files that earlier builds wrote. Old saved analyses keep opening
-    without any user action.
+    AND tolerates every filename convention this app has shipped - the
+    current ``{Slug}_CV.*`` / ``{Slug}_Cover_Letter.*`` Title_Case names,
+    the previous lowercase ``{slug}_cv.*`` / ``{slug}_cover_letter.*``
+    form, and the legacy ``tailored_resume.*`` / ``cover_letter.*``
+    files. Old saved analyses keep opening without any user action.
     """
     p = Path(folder)
-    evidence_raw = _read_text_or_empty(p / "evidence_report.json")
+    evidence_raw = _read_text_or_empty(
+        _first_existing(p, "Evidence_Report.json", "evidence_report.json")
+    )
     evidence_obj: dict = {}
     if evidence_raw:
         try:
@@ -139,12 +147,20 @@ def load_package_files(folder: str | Path) -> StoredAnalysis:
         folder=p,
         resume_md=_read_text_or_empty(resume_md_path),
         cover_letter_md=_read_text_or_empty(cover_md_path),
-        match_report_md=_read_text_or_empty(p / "match_report.md"),
-        interview_md=_read_text_or_empty(p / "interview_questions.md"),
-        skill_gap_md=_read_text_or_empty(p / "skill_gap_plan.md"),
+        match_report_md=_read_text_or_empty(
+            _first_existing(p, "Match_Report.md", "match_report.md")
+        ),
+        interview_md=_read_text_or_empty(
+            _first_existing(p, "Interview_Questions.md", "interview_questions.md")
+        ),
+        skill_gap_md=_read_text_or_empty(
+            _first_existing(p, "Skill_Gap_Plan.md", "skill_gap_plan.md")
+        ),
         evidence_json=evidence_raw,
         styled_resume_html=_read_text_or_empty(resume_html_path),
-        summary_html=_read_text_or_empty(p / "application_summary.html"),
+        summary_html=_read_text_or_empty(
+            _first_existing(p, "Application_Summary.html", "application_summary.html")
+        ),
         evidence=evidence_obj,
     )
 

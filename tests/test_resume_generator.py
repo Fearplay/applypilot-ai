@@ -208,6 +208,12 @@ class _StubProvider(BaseAIProvider):
     def generate_skill_gap_plan(self, match_report, job, output_language="en"):
         raise NotImplementedError
 
+    def refine_cover_letter(
+        self, current_cover_letter, feedback, job, candidate, answers,
+        output_language="en", previous_explanation="",
+    ):
+        raise NotImplementedError
+
 
 class _GenerateStubProvider(_StubProvider):
     def __init__(self, resume: TailoredResume) -> None:

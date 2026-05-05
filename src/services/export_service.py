@@ -42,7 +42,7 @@ from ..models.evidence import EvidenceItem
 from ..models.match import MatchReport
 from ..models.package import GeneratedApplicationPackage
 from ..utils.file_utils import ensure_dir
-from ..utils.slugify import name_slug, slugify
+from ..utils.slugify import pretty_name_slug, slugify
 from ..utils.text_cleaning import strip_ai_tells
 from . import document_themes
 from .document_themes import (  # re-exported for back-compat with existing callers
@@ -106,24 +106,31 @@ def build_export_paths(folder: Path, candidate_name: str = "") -> ExportPaths:
 
     ``candidate_name`` typically comes from ``TailoredResume.name`` (or the
     ``CandidateProfile.full_name`` fallback). It is slugified into a safe
-    ASCII identifier; empty / unparseable input collapses to ``applicant``
+    ASCII Title_Case identifier (``Juraj_Acsay`` rather than
+    ``juraj_acsay``); empty / unparseable input collapses to ``Applicant``
     so the resulting filenames never break disk semantics.
+
+    The recruiter-facing artefacts (CV, cover letter, supporting reports)
+    all ship with title-cased names: ``Juraj_Acsay_CV.pdf``,
+    ``Juraj_Acsay_Cover_Letter.pdf``, ``Match_Report.md``, etc. The user
+    explicitly asked for the capitalised form because that is the
+    standard convention for personal documents.
     """
-    slug = name_slug(candidate_name)
+    slug = pretty_name_slug(candidate_name)
     return ExportPaths(
         folder=folder,
-        resume_md=folder / f"{slug}_cv.md",
-        resume_docx=folder / f"{slug}_cv.docx",
-        resume_html=folder / f"{slug}_cv.html",
-        resume_pdf=folder / f"{slug}_cv.pdf",
-        cover_letter_md=folder / f"{slug}_cover_letter.md",
-        cover_letter_docx=folder / f"{slug}_cover_letter.docx",
-        cover_letter_pdf=folder / f"{slug}_cover_letter.pdf",
-        match_report_md=folder / "match_report.md",
-        interview_md=folder / "interview_questions.md",
-        skill_gap_md=folder / "skill_gap_plan.md",
-        evidence_json=folder / "evidence_report.json",
-        summary_html=folder / "application_summary.html",
+        resume_md=folder / f"{slug}_CV.md",
+        resume_docx=folder / f"{slug}_CV.docx",
+        resume_html=folder / f"{slug}_CV.html",
+        resume_pdf=folder / f"{slug}_CV.pdf",
+        cover_letter_md=folder / f"{slug}_Cover_Letter.md",
+        cover_letter_docx=folder / f"{slug}_Cover_Letter.docx",
+        cover_letter_pdf=folder / f"{slug}_Cover_Letter.pdf",
+        match_report_md=folder / "Match_Report.md",
+        interview_md=folder / "Interview_Questions.md",
+        skill_gap_md=folder / "Skill_Gap_Plan.md",
+        evidence_json=folder / "Evidence_Report.json",
+        summary_html=folder / "Application_Summary.html",
     )
 
 

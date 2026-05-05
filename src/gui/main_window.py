@@ -40,7 +40,10 @@ from ..models.evidence import EvidenceCheckResult
 from ..models.job import JobPosting
 from ..models.match import AnswersBundle, ClarifyingQuestion, MatchReport
 from ..models.package import GeneratedApplicationPackage
-from ..services.cover_letter_generator import generate_cover_letter
+from ..services.cover_letter_generator import (
+    generate_cover_letter,
+    refine_cover_letter,
+)
 from ..services.export_service import export_package
 from ..services.gap_plan_generator import generate_skill_gap_plan
 from ..services.history_service import append_history, load_package_files
@@ -64,7 +67,6 @@ from .refine_confirm_dialog import RefineConfirmDialog
 from .settings_dialog import SettingsDialog
 from .setup_page import SetupPage
 from .theme import Tokens
-from .widgets.session_cost_label import SessionCostLabel
 from .widgets.sidebar import Sidebar, SidebarItem
 from .widgets.status_chip import StatusChip
 from .workers import run_in_background
@@ -406,19 +408,22 @@ class MainWindow(QMainWindow):
         self._docs_page.back_clicked.connect(lambda: self._goto("match"))
         self._docs_page.save_analysis_clicked.connect(self._on_save_analysis)
         self._docs_page.refine_requested.connect(self._on_refine_requested)
+        self._docs_page.change_layout_clicked.connect(self._on_change_layout)
+        self._docs_page.change_colour_clicked.connect(self._on_change_colour)
         self._stack.addWidget(self._docs_page)
 
         self._history_page = HistoryPage(self._settings)
         self._history_page.open_in_app_requested.connect(self._on_open_history_in_app)
         self._stack.addWidget(self._history_page)
 
+        # The live AI session counter used to live in the status bar,
+        # but the user complained it was too easy to miss inside the
+        # ephemeral status messages. The primary cost surface is now the
+        # SESSION COST block directly above the activity row in the
+        # sidebar (see :class:`Sidebar`); the status bar stays clean for
+        # transient workflow messages so the cost block can never get
+        # visually clobbered.
         status_bar = QStatusBar()
-        # Live AI session counter on the left so the user always sees
-        # "AI: N calls - X tokens - ~$Y this session" even when the rest
-        # of the status bar is empty. Helps spot the next time something
-        # spends money unexpectedly.
-        self._session_cost_label = SessionCostLabel(self)
-        status_bar.addWidget(self._session_cost_label)
         self.setStatusBar(status_bar)
         self._build_menu()
 
@@ -1131,6 +1136,73 @@ class MainWindow(QMainWindow):
             on_failed=self._on_workflow_failed,
         )
 
+    def _on_change_layout(self) -> None:
+        """Rotate the resume's layout (structure) without changing the palette.
+
+        The user explicitly asked for this to be SEPARATE from the
+        colour swap because the previous "Change style" button only
+        ever rotated the palette. We resolve the current theme, walk
+        :func:`pick_different_layout` to land on a theme with a
+        different ``layout_slug``, persist the new slug on the
+        package, and rerender just the modern preview so the user
+        instantly sees the structural change without a full reload.
+        """
+        self._rotate_theme_axis(axis="layout")
+
+    def _on_change_colour(self) -> None:
+        """Rotate the resume's palette without changing the layout."""
+        self._rotate_theme_axis(axis="colour")
+
+    def _rotate_theme_axis(self, *, axis: str) -> None:
+        from ..services.document_themes import (
+            pick_different_layout,
+            pick_different_palette,
+            resolve_theme,
+        )
+
+        package = self._state.package
+        if package is None:
+            QMessageBox.information(
+                self,
+                t("docs.modern.nothing_to_restyle.title"),
+                t("docs.modern.nothing_to_restyle.body"),
+            )
+            return
+        current_slug = (
+            self._state.docs_theme
+            or package.output_theme
+            or "teal_sidebar"
+        )
+        current_theme = resolve_theme(current_slug)
+        if axis == "layout":
+            new_theme = pick_different_layout(current_theme)
+        else:
+            new_theme = pick_different_palette(current_theme)
+        # Persist the new slug on BOTH the package (so save / export use
+        # it) and the workflow state (so future regenerations honour
+        # the user's latest pick). The resolve_theme cache holds the
+        # synthetic combos so the slug round-trips on subsequent calls.
+        package.output_theme = new_theme.slug
+        self._state.docs_theme = new_theme.slug
+        # Re-render just the modern-resume preview - no need to rewrite
+        # the markdown editors which are theme-agnostic.
+        self._docs_page.update_modern_resume_theme(package, new_theme)
+        # Surface a friendly inline note so the user sees confirmation.
+        if axis == "layout":
+            self._docs_page.set_status(
+                t(
+                    "docs.modern.changed_layout",
+                    name=new_theme.display_name(self._state.docs_language or "en"),
+                )
+            )
+        else:
+            self._docs_page.set_status(
+                t(
+                    "docs.modern.changed_colour",
+                    name=new_theme.display_name(self._state.docs_language or "en"),
+                )
+            )
+
     def _on_open_history_in_app(self, folder_path: str) -> None:
         try:
             payload = load_package_files(folder_path)
@@ -1151,10 +1223,26 @@ class MainWindow(QMainWindow):
         )
         self._goto("documents")
 
-    def _on_refine_requested(self, feedback: str) -> None:
-        """Handle the 'Refine with AI' button from the documents page."""
+    def _on_refine_requested(self, feedback: str, target: str = "resume") -> None:
+        """Handle the 'Refine with AI' button from the documents page.
+
+        ``target`` is set by :meth:`DocumentsPage._resolve_refine_target`
+        from the active tab: ``"resume"`` for the markdown + modern
+        resume tabs and ``"cover_letter"`` for the cover-letter tab.
+        Other tabs are blocked at the documents-page level so this
+        method never has to deal with them.
+        """
         state = self._state
-        if not state.resume or not state.job or not state.candidate:
+        # Both branches need a job + candidate, plus the target document
+        # itself. Bail early so we never call AI without the data the
+        # prompt needs to be coherent.
+        if not state.job or not state.candidate:
+            self._docs_page.set_refine_enabled(True)
+            return
+        if target == "cover_letter" and not state.cover_letter:
+            self._docs_page.set_refine_enabled(True)
+            return
+        if target == "resume" and not state.resume:
             self._docs_page.set_refine_enabled(True)
             return
 
@@ -1181,7 +1269,6 @@ class MainWindow(QMainWindow):
                 state.skip_refine_confirm = True
 
         provider = self._provider
-        current_resume = state.resume
         job = state.job
         # Mirror the filtering applied at initial generation so the
         # refine safety net never re-injects rows the user already
@@ -1194,7 +1281,6 @@ class MainWindow(QMainWindow):
             state.candidate, state.excluded_entry_ids
         )
         answers = state.answers
-        evidence_items = list(state.evidence.items) if state.evidence else []
         docs_lang = state.docs_language or get_language()
         # Capture the AI's previous explanation so the refine prompt can
         # interpret a bare 'ano' / 'yes' as agreement with the suggestion
@@ -1204,43 +1290,90 @@ class MainWindow(QMainWindow):
         # actually saw in the GUI before typing.
         previous_explanation = state.last_refine_explanation
 
-        self._docs_page.set_status(t("docs.refine.status"))
-        self.statusBar().showMessage(t("docs.refine.status"))
+        # The status message + the audit-log trigger now both record
+        # WHICH document is being refined so the audit trail can answer
+        # "did I burn tokens on the cover letter or the resume?".
+        if target == "cover_letter":
+            status_msg = t("docs.refine.status.cover_letter")
+        else:
+            status_msg = t("docs.refine.status.resume")
+        self._docs_page.set_status(status_msg)
+        self.statusBar().showMessage(status_msg)
 
-        # Tag the upcoming AI calls in the audit log so the user can
-        # answer "who initiated this refine?" weeks later.
         feedback_preview = (feedback or "").strip().replace("\n", " ")[:120]
         trigger = (
-            "MainWindow._on_refine_requested feedback="
-            f"{feedback_preview!r}"
+            "MainWindow._on_refine_requested "
+            f"target={target!r} feedback={feedback_preview!r}"
         )
         self._set_provider_trigger(trigger)
 
-        def work():
-            return refine_tailored_resume(
-                provider, current_resume, feedback,
-                job, candidate, answers, evidence_items,
-                output_language=docs_lang,
-                previous_explanation=previous_explanation,
+        if target == "cover_letter":
+            current_cover = state.cover_letter
+
+            def work():
+                return refine_cover_letter(
+                    provider, current_cover, feedback,
+                    job, candidate, answers,
+                    output_language=docs_lang,
+                    previous_explanation=previous_explanation,
+                )
+
+            def on_done(refined):
+                # ``refine_cover_letter`` returns a ``RefinedCoverLetter``
+                # with the updated cover letter AND a 1-3 sentence
+                # ``explanation`` (in the docs language) we surface inline
+                # so the user knows what changed.
+                updated = refined.cover_letter
+                state.cover_letter = updated
+                state.last_refine_explanation = (
+                    refined.explanation or ""
+                ).strip()
+                if state.package:
+                    state.package.cover_letter = updated
+                    # Reload via load_package so the cover-letter editor
+                    # AND the modern-resume preview both refresh
+                    # consistently with the new package state.
+                    self._docs_page.load_package(state.package)
+                self._docs_page.set_refine_enabled(True)
+                inline_message = (
+                    refined.explanation.strip() or t("docs.refine.done")
+                )
+                self._docs_page.set_status(inline_message)
+                self.statusBar().clearMessage()
+
+        else:
+            current_resume = state.resume
+            evidence_items = (
+                list(state.evidence.items) if state.evidence else []
             )
 
-        def on_done(refined):
-            # ``refine_tailored_resume`` returns a ``RefinedResume`` with
-            # the updated resume AND a 1-3 sentence ``explanation`` (in
-            # the docs language) we surface inline so the user knows what
-            # changed without opening the modern preview.
-            updated_resume = refined.resume
-            state.resume = updated_resume
-            state.last_refine_explanation = (refined.explanation or "").strip()
-            if state.package:
-                state.package.tailored_resume = updated_resume
-                self._docs_page.load_package(state.package)
-            self._docs_page.set_refine_enabled(True)
-            inline_message = (
-                refined.explanation.strip() or t("docs.refine.done")
-            )
-            self._docs_page.set_status(inline_message)
-            self.statusBar().clearMessage()
+            def work():
+                return refine_tailored_resume(
+                    provider, current_resume, feedback,
+                    job, candidate, answers, evidence_items,
+                    output_language=docs_lang,
+                    previous_explanation=previous_explanation,
+                )
+
+            def on_done(refined):
+                # ``refine_tailored_resume`` returns a ``RefinedResume`` with
+                # the updated resume AND a 1-3 sentence ``explanation`` (in
+                # the docs language) we surface inline so the user knows what
+                # changed without opening the modern preview.
+                updated_resume = refined.resume
+                state.resume = updated_resume
+                state.last_refine_explanation = (
+                    refined.explanation or ""
+                ).strip()
+                if state.package:
+                    state.package.tailored_resume = updated_resume
+                    self._docs_page.load_package(state.package)
+                self._docs_page.set_refine_enabled(True)
+                inline_message = (
+                    refined.explanation.strip() or t("docs.refine.done")
+                )
+                self._docs_page.set_status(inline_message)
+                self.statusBar().clearMessage()
 
         def on_failed(message):
             self._docs_page.set_refine_enabled(True)

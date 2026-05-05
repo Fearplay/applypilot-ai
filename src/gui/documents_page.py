@@ -257,7 +257,24 @@ class _RefinePanel(QFrame):
 class DocumentsPage(QWidget):
     save_analysis_clicked = Signal()
     back_clicked = Signal()
-    refine_requested = Signal(str)
+    # Carries (formatted_feedback, target) where target is one of
+    # ``"resume"`` or ``"cover_letter"`` and identifies WHICH document
+    # the user wants the AI to rewrite. The active tab decides the
+    # value (resume + modern resume tabs -> "resume"; cover letter
+    # tab -> "cover_letter"). Tabs that don't have an AI refine flow
+    # (match report, evidence, ...) block the click before this signal
+    # ever fires.
+    refine_requested = Signal(str, str)
+    # Emitted when the user presses "Change layout" / "Change colour"
+    # in the modern-resume tab. The MainWindow listens and rotates the
+    # resume's :class:`ResumeTheme` along the requested axis: layout
+    # changes the structural CSS (two-column vs single-column vs
+    # banner), colour changes only the palette so the structure stays
+    # the same. The user explicitly asked for these to be SEPARATE
+    # actions because the previous "Change style" button was just
+    # another colour pick.
+    change_layout_clicked = Signal()
+    change_colour_clicked = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -389,8 +406,47 @@ class DocumentsPage(QWidget):
         save_html.clicked.connect(self._export_modern_resume_html)
         actions.addWidget(save_html)
 
+        # ``Change layout`` rotates the structural CSS (two-column /
+        # banner / minimal) while keeping the same palette. ``Change
+        # colour`` swaps only the palette so the resume keeps its
+        # current shape. The user explicitly asked for these to be two
+        # buttons - the previous single "Change style" silently only
+        # changed the colour because three of six themes shared the
+        # same layout, leaving the user confused.
+        self._change_layout_btn = QPushButton(t("docs.modern.change_layout"))
+        self._change_layout_btn.setToolTip(t("docs.modern.change_layout.tip"))
+        self._change_layout_btn.clicked.connect(self.change_layout_clicked.emit)
+        actions.addWidget(self._change_layout_btn)
+
+        self._change_colour_btn = QPushButton(t("docs.modern.change_colour"))
+        self._change_colour_btn.setToolTip(t("docs.modern.change_colour.tip"))
+        self._change_colour_btn.clicked.connect(self.change_colour_clicked.emit)
+        actions.addWidget(self._change_colour_btn)
+
         layout.addLayout(actions)
         return wrap
+
+    def update_modern_resume_theme(
+        self, package: GeneratedApplicationPackage, theme
+    ) -> None:
+        """Re-render only the modern-resume preview with a new theme.
+
+        Used by the ``Change layout`` / ``Change colour`` buttons:
+        we want to update the visual preview without rewriting the
+        markdown editor (which is the raw resume text and has no theme
+        of its own). ``theme`` may be a slug string OR an explicit
+        :class:`ResumeTheme` instance from
+        :func:`pick_different_layout` /
+        :func:`pick_different_palette`.
+        """
+        self._set_modern_resume_html(
+            tailored_resume_to_styled_html(
+                package.tailored_resume,
+                package.candidate_profile,
+                output_language=package.output_language or "en",
+                theme=theme,
+            )
+        )
 
     def _set_modern_resume_html(self, doc: str) -> None:
         self._modern_resume_html = doc
@@ -424,14 +480,14 @@ class DocumentsPage(QWidget):
             )
             return
         try:
-            from ..utils.slugify import name_slug
+            from ..utils.slugify import pretty_name_slug
             default_name = (
-                f"{name_slug(self._candidate_name)}_cv.html"
+                f"{pretty_name_slug(self._candidate_name)}_CV.html"
                 if self._candidate_name
-                else "tailored_resume.html"
+                else "Tailored_Resume.html"
             )
         except ImportError:  # pragma: no cover - safety
-            default_name = "tailored_resume.html"
+            default_name = "Tailored_Resume.html"
         path, _ = QFileDialog.getSaveFileName(
             self,
             t("docs.modern.export_title"),
@@ -446,6 +502,21 @@ class DocumentsPage(QWidget):
         except OSError as exc:
             QMessageBox.critical(self, t("docs.error.export_title"), str(exc))
 
+    def _resolve_refine_target(self) -> str | None:
+        """Return ``"resume"`` / ``"cover_letter"`` for the active tab.
+
+        Returns ``None`` for tabs that don't have an AI refine flow
+        (match report, interview prep, skill gap plan, evidence). The
+        caller turns ``None`` into a user-facing "switch tabs" hint
+        instead of accidentally rewriting the wrong document.
+        """
+        widget = self._tabs.currentWidget()
+        if widget is self._resume_edit or widget is self._modern_resume:
+            return "resume"
+        if widget is self._cover_edit:
+            return "cover_letter"
+        return None
+
     def _on_refine_clicked(self, feedback: str) -> None:
         # ``feedback`` is the formatted "1) ...\n2) ..." string built by the
         # multi-problem panel. Empty payloads are filtered out by the panel
@@ -453,8 +524,22 @@ class DocumentsPage(QWidget):
         # receive the signal we can pass it straight to the orchestrator.
         if not feedback:
             return
+        target = self._resolve_refine_target()
+        if target is None:
+            # User clicked Refine on a tab that doesn't carry an AI
+            # refine flow (match report / evidence / interview / gaps).
+            # Tell them clearly instead of silently rewriting the
+            # resume - the user explicitly asked for the panel to act
+            # on the active tab.
+            QMessageBox.information(
+                self,
+                t("docs.refine.unsupported_tab.title"),
+                t("docs.refine.unsupported_tab.body"),
+            )
+            self._refine_panel.set_busy(False)
+            return
         self._refine_panel.set_busy(True)
-        self.refine_requested.emit(feedback)
+        self.refine_requested.emit(feedback, target)
 
     def set_refine_enabled(self, enabled: bool) -> None:
         """Re-enable the refine panel after a refinement completes or fails."""
@@ -558,24 +643,27 @@ class DocumentsPage(QWidget):
     def _default_export_basename(self) -> str:
         """Pick the default filename stem for the current tab.
 
-        Resume / cover-letter tabs use the candidate slug
-        (``jan_novak_cv``, ``jan_novak_cover_letter``) so manual single
-        -doc exports match the bulk Save-analysis naming the user
+        Resume / cover-letter tabs use the Title_Case candidate slug
+        (``Juraj_Acsay_CV``, ``Juraj_Acsay_Cover_Letter``) so manual
+        single-doc exports match the bulk Save-analysis naming the user
         explicitly asked for. Other tabs (match report, interview prep,
-        skill gap) keep their tab-name based default because there is
-        no candidate-personalised name for those.
+        skill gap) keep their tab-name based default but with the same
+        Title_Case_Underscore styling so no file in the folder breaks
+        the convention.
         """
         try:
-            from ..utils.slugify import name_slug
+            from ..utils.slugify import pretty_name_slug
         except ImportError:  # pragma: no cover - safety
-            name_slug = lambda name: "applicant"  # type: ignore[assignment]
+            pretty_name_slug = lambda name: "Applicant"  # type: ignore[assignment]
         idx = self._tabs.currentIndex()
         widget = self._tabs.widget(idx)
         if widget is self._resume_edit and self._candidate_name:
-            return f"{name_slug(self._candidate_name)}_cv"
+            return f"{pretty_name_slug(self._candidate_name)}_CV"
         if widget is self._cover_edit and self._candidate_name:
-            return f"{name_slug(self._candidate_name)}_cover_letter"
-        return self.current_tab_name().lower().replace(" ", "_")
+            return f"{pretty_name_slug(self._candidate_name)}_Cover_Letter"
+        return "_".join(
+            tok.capitalize() for tok in self.current_tab_name().split() if tok
+        ) or "Document"
 
     def _export_current_md(self) -> None:
         tab = self.current_tab_name()

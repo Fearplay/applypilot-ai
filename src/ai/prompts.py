@@ -1004,6 +1004,127 @@ def refine_resume_user_prompt(
     )
 
 
+def refine_cover_letter_user_prompt(
+    current_cover_letter: Any,
+    feedback: str,
+    job: JobPosting,
+    candidate: CandidateProfile,
+    answers: AnswersBundle,
+    output_language: str = "en",
+    previous_explanation: str = "",
+) -> str:
+    """Build the user prompt for a cover-letter refine pass.
+
+    Mirrors :func:`refine_resume_user_prompt` so the cover-letter loop
+    inherits the same affirmation interpretation, LinkedIn safety net
+    and direct-text-replacement rules. The model returns a
+    :class:`RefinedCoverLetter` with the FULL updated cover letter plus
+    a 1-3 sentence explanation. The deterministic safety nets in
+    :mod:`src.services.cover_letter_generator` (role-heading stripper,
+    duplicate sign-off cleanup) run on the result regardless of which
+    provider produced it.
+    """
+    has_linkedin = _candidate_has_linkedin_signal(candidate)
+    linkedin_block = (
+        ""
+        if has_linkedin
+        else (
+            "LINKEDIN ABSENCE (HARD RULE):\n"
+            "- The candidate did NOT supply a LinkedIn export for this "
+            "session. Do NOT reference LinkedIn anywhere in the cover "
+            "letter or `explanation`. Reason from the CV / GitHub data / "
+            "user answers alone.\n\n"
+        )
+    )
+    prev_explanation_block = ""
+    if previous_explanation.strip():
+        prev_explanation_block = (
+            "PREVIOUS_AI_EXPLANATION (the note YOU wrote in the last refine "
+            "round, shown for context):\n"
+            f"{previous_explanation.strip()}\n\n"
+            "AFFIRMATION INTERPRETATION (HARD RULE):\n"
+            "- If the user's current FEEDBACK is a short affirmation ('yes', "
+            "'ano', 'jo', 'ok', 'okay', 'sure', 'go ahead', 'do it', "
+            "'klidn\u011b', 'jasn\u011b', 'proved\u2019', 'sma\u017e to', "
+            "'odstra\u0148 to', 'jdi do toho') WITHOUT any other concrete "
+            "instructions, treat it as the user AGREEING with the SUGGESTION "
+            "you made in PREVIOUS_AI_EXPLANATION above. Perform the action "
+            "you proposed (rewrite the opening paragraph, mention X, drop Y, "
+            "etc.). Be decisive: the user already answered. Do NOT just "
+            "acknowledge - actually mutate the cover letter to reflect the "
+            "action you proposed.\n\n"
+        )
+    return (
+        "The user has reviewed the current tailored cover letter and "
+        "provided feedback describing what is wrong or missing. Your task "
+        "is to produce an UPDATED cover letter that addresses every point "
+        "in the user's feedback while keeping everything that was already "
+        "fine, and to explain (briefly) what you changed.\n\n"
+        "OUTPUT SCHEMA: return a `RefinedCoverLetter` JSON with two "
+        "fields:\n"
+        "- `cover_letter`: the complete updated `CoverLetter` JSON. NOT a "
+        "diff and NOT a partial update - this object replaces the current "
+        "cover letter entirely. Keep the structured `salutation`, "
+        "`paragraphs`, `closing`, `signature` shape.\n"
+        "- `explanation`: 1-3 sentences (in OUTPUT_LANGUAGE) telling the "
+        "user WHAT you changed and, when relevant, WHY the previous "
+        "version had the issue. Be concrete and reference the specific "
+        "paragraph or sentence you rewrote.\n\n"
+        "USER IS AUTHORITATIVE (HARD RULE - HIGHEST PRIORITY):\n"
+        "- The user is the FINAL AUTHORITY over their own cover letter. "
+        "When their feedback contradicts the original CV / candidate data, "
+        "the user wins. If they say 'tone too humble', soften the apologies "
+        "and add concrete impact. If they say 'change Avast to Gen Digital', "
+        "use Gen Digital. If they say 'mention RAG project', mention it.\n"
+        "- DIRECT TEXT REPLACEMENT: when the user explicitly asks to "
+        "change one specific phrase to another, perform that EXACT "
+        "substitution wherever the original phrase appears in the cover "
+        "letter (salutation, paragraphs, closing).\n\n"
+        + prev_explanation_block
+        + linkedin_block
+        + "FEEDBACK INTERPRETATION (HARD RULE):\n"
+        "- The feedback may be ONE sentence OR a numbered list ('1) ...\\n"
+        "2) ...\\n3) ...'). When you see a numbered list, treat each item "
+        "as a SEPARATE actionable request and address them ALL in the "
+        "single updated cover letter you return. Do NOT skip any numbered "
+        "item even if you think it overlaps with another - the user typed "
+        "them as distinct concerns.\n"
+        "- 'remove', 'sma\u017e', 'odstra\u0148', 'delete', 'odeber' are "
+        "deletion intents. 'add', 'p\u0159idej', 'dopl\u0148', 'mention', "
+        "'zm\u00ednit' are addition intents. 'change X to Y', 'p\u0159epi\u0161 "
+        "X na Y' are replacement intents. Always ask yourself which intent "
+        "matches the feedback before changing anything.\n\n"
+        "STRUCTURE RULES (HARD - violations will be stripped before save):\n"
+        "- Do NOT include a heading line such as 'Cover letter for X at Y' "
+        "at the top. The first content the user reads must be the "
+        "salutation.\n"
+        "- The body must read as a direct message to the hiring team.\n"
+        "- Put the sign-off ONLY in the structured `closing` and "
+        "`signature` fields. Do NOT also paste 'Best regards, <Name>' at "
+        "the end of the last body paragraph.\n"
+        "- Keep the cover letter to 3-4 paragraphs unless the user "
+        "explicitly asks for a longer / shorter version.\n\n"
+        "INSTRUCTIONS:\n"
+        "- Read the CURRENT COVER LETTER below.\n"
+        "- Read the USER FEEDBACK carefully. Fix, add or rework exactly "
+        "what the user asks for - and only that. Do not silently revert "
+        "other parts of the cover letter.\n"
+        "- All rules from the original cover-letter generation still "
+        "apply: no hallucinated achievements, ATS-friendly prose, "
+        "OUTPUT_LANGUAGE consistency for both `cover_letter` and "
+        "`explanation`.\n"
+        "- If the user asks to add something that is not in the candidate "
+        "data, say so honestly in `explanation` rather than inventing "
+        "content.\n\n"
+        "CURRENT COVER LETTER:\n" + _dump(current_cover_letter) + "\n\n"
+        "USER FEEDBACK:\n" + feedback.strip() + "\n\n"
+        "JOB:\n" + _dump_job(job) + "\n\n"
+        "CANDIDATE:\n" + _dump(candidate) + "\n\n"
+        "USER ANSWERS:\n" + _dump(answers) + "\n\n"
+        + _language_directive(output_language)
+    )
+
+
 def candidate_questions_for_company_prompt(
     job: JobPosting, candidate: CandidateProfile
 ) -> list[ClarifyingAnswer]:  # pragma: no cover - kept for symmetry, not used
@@ -1019,6 +1140,7 @@ __all__ = [
     "match_report_user_prompt",
     "resume_user_prompt",
     "refine_resume_user_prompt",
+    "refine_cover_letter_user_prompt",
     "cover_letter_user_prompt",
     "interview_questions_user_prompt",
     "skill_gap_user_prompt",

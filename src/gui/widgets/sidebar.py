@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from ...i18n import t
 from ..theme import Tokens
+from .session_cost_label import SessionCostLabel
 from .status_chip import ChipVariant, StatusChip
 
 
@@ -168,11 +169,31 @@ class Sidebar(QFrame):
 
         outer.addItem(QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding))
 
+        # ---------- session cost (above the activity block) -----------
+        # The user explicitly asked for a permanent, prominent cost
+        # readout next to / above the activity area so they can see how
+        # much they have spent in real time without scanning the status
+        # bar. Sits ABOVE the activity row so changing activity messages
+        # (which fire during AI calls) cannot visually obscure the cost.
+        self._cost_header = QLabel(t("sidebar.cost"))
+        self._cost_header.setProperty("role", "section-label")
+        self._cost_header.setStyleSheet(
+            f"color: {Tokens.text_dim}; font-size: 10px; font-weight: 700;"
+            f" letter-spacing: 1.4px;"
+        )
+        outer.addWidget(self._cost_header)
+
+        # ``compact=False`` switches the label into the multi-line
+        # "calls / tokens" + big dollar-row layout used in the sidebar.
+        self._cost_value = SessionCostLabel(self, compact=False)
+        outer.addWidget(self._cost_value)
+
+        # ---------- activity (under the cost block) -------------------
         self._footer_lbl = QLabel(t("sidebar.activity"))
         self._footer_lbl.setProperty("role", "section-label")
         self._footer_lbl.setStyleSheet(
             f"color: {Tokens.text_dim}; font-size: 10px; font-weight: 700;"
-            f" letter-spacing: 1.4px;"
+            f" letter-spacing: 1.4px; padding-top: 6px;"
         )
         outer.addWidget(self._footer_lbl)
 
@@ -195,6 +216,9 @@ class Sidebar(QFrame):
             row.set_status(text, variant)
 
     def set_activity(self, text: str) -> None:
+        # Activity messages must NEVER touch the cost row. Confining the
+        # update to ``self._activity`` keeps the live AI-spend readout
+        # visible regardless of what the active workflow step prints.
         self._activity.setText(text or t("sidebar.activity.ready"))
 
     def update_row_titles(self, titles: dict[str, tuple[str, str]]) -> None:
@@ -212,6 +236,7 @@ class Sidebar(QFrame):
             row.set_titles(new_title, new_subtitle)
         self._section_lbl.setText(t("sidebar.workflow"))
         self._footer_lbl.setText(t("sidebar.activity"))
+        self._cost_header.setText(t("sidebar.cost"))
 
 
 __all__ = ["Sidebar", "SidebarItem"]

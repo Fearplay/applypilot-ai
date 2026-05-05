@@ -106,6 +106,30 @@ class CoverLetter(BaseModel):
     role: str = ""
 
 
+class RefinedCoverLetter(BaseModel):
+    """Output of a refine-with-AI pass on a cover letter.
+
+    Mirrors :class:`RefinedResume`: the AI returns the FULL updated
+    cover letter (replacing the previous draft entirely) plus a 1-3
+    sentence ``explanation`` the GUI shows inline so the user sees what
+    actually changed. Refining the cover letter goes through the same
+    multi-problem panel as the resume; the user picks WHICH document
+    they are refining by picking the active tab.
+    """
+
+    model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
+
+    cover_letter: CoverLetter
+    explanation: str = Field(
+        default="",
+        description=(
+            "1-3 sentence natural-language note (in OUTPUT_LANGUAGE) that "
+            "tells the user what the refinement changed and why it was "
+            "necessary. Shown inline in the GUI under the refine panel."
+        ),
+    )
+
+
 class InterviewQuestion(BaseModel):
     model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
 
@@ -133,6 +157,7 @@ __all__ = [
     "TailoredResume",
     "RefinedResume",
     "CoverLetter",
+    "RefinedCoverLetter",
     "InterviewQuestion",
     "SkillGap",
 ]
