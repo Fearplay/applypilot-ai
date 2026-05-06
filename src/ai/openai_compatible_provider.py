@@ -524,10 +524,12 @@ class OpenAICompatibleProvider(BaseAIProvider):
         answers: AnswersBundle,
         evidence: Sequence[EvidenceItem] = (),
         output_language: str = "en",
+        translate_positions: bool = True,
     ) -> TailoredResume:
         system = prompts.system_prompt_for(job.role_type)
         user = prompts.resume_user_prompt(
-            job, candidate, answers, list(evidence), output_language
+            job, candidate, answers, list(evidence), output_language,
+            translate_positions=translate_positions,
         )
         return self._run("resume", system, user, TailoredResume)
 
@@ -574,12 +576,14 @@ class OpenAICompatibleProvider(BaseAIProvider):
         evidence: Sequence[EvidenceItem] = (),
         output_language: str = "en",
         previous_explanation: str = "",
+        translate_positions: bool = True,
     ) -> RefinedResume:
         system = prompts.system_prompt_for(job.role_type)
         user = prompts.refine_resume_user_prompt(
             current_resume, feedback, job, candidate, answers,
             list(evidence), output_language,
             previous_explanation=previous_explanation,
+            translate_positions=translate_positions,
         )
         return self._run("refine_resume", system, user, RefinedResume)
 

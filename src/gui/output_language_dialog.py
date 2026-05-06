@@ -20,6 +20,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -40,6 +41,10 @@ from .theme import Tokens
 
 #: Preference key used to remember the last picked theme across runs.
 PREF_KEY_DOCS_THEME = "docs_theme"
+#: Preference key for the "translate position titles" checkbox. Persisted
+#: as a bool string so we round-trip cleanly through the JSON preference
+#: store.
+PREF_KEY_TRANSLATE_POSITIONS = "translate_positions"
 
 
 class OutputLanguageDialog(QDialog):
@@ -50,6 +55,7 @@ class OutputLanguageDialog(QDialog):
         default: str = "en",
         *,
         default_theme: str | None = None,
+        default_translate_positions: bool | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -134,6 +140,25 @@ class OutputLanguageDialog(QDialog):
             idx = self._theme_combo.findData(DEFAULT_THEME_SLUG)
         self._theme_combo.setCurrentIndex(max(idx, 0))
 
+        # "Translate position titles" toggle. Default ON because that has
+        # been the implicit historical behaviour for years; users who
+        # specifically want to keep ``"Senior Software QA Engineer"``
+        # verbatim on a Czech resume tick the box off and the preference
+        # is persisted so they don't have to do it every run.
+        if default_translate_positions is None:
+            stored = get_preference(PREF_KEY_TRANSLATE_POSITIONS, True)
+            default_translate_positions = (
+                stored if isinstance(stored, bool) else str(stored).lower() != "false"
+            )
+        self._translate_positions = QCheckBox(
+            t("out_lang.translate_positions.label")
+        )
+        self._translate_positions.setToolTip(
+            t("out_lang.translate_positions.tooltip")
+        )
+        self._translate_positions.setChecked(bool(default_translate_positions))
+        layout.addWidget(self._translate_positions)
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel
         )
@@ -159,6 +184,16 @@ class OutputLanguageDialog(QDialog):
         slug = self._theme_combo.currentData()
         return str(slug or RANDOM_THEME_SLUG)
 
+    def selected_translate_positions(self) -> bool:
+        """Return whether role titles should be translated to ``selected_language``.
+
+        ``True`` by default and after every run that didn't touch the
+        checkbox; ``False`` only when the user explicitly opted out via
+        the dialog. Mirrors :func:`selected_theme` in shape so callers
+        plumb the three accessors through together.
+        """
+        return self._translate_positions.isChecked()
+
     def _on_accept(self) -> None:
         # Persist the user's pick so next time the dialog opens with the
         # same theme highlighted - this directly addresses the user's
@@ -168,7 +203,18 @@ class OutputLanguageDialog(QDialog):
             set_preference(PREF_KEY_DOCS_THEME, self.selected_theme())
         except Exception:  # pragma: no cover - preferences must never break the dialog
             pass
+        try:
+            set_preference(
+                PREF_KEY_TRANSLATE_POSITIONS,
+                self.selected_translate_positions(),
+            )
+        except Exception:  # pragma: no cover - preferences must never break the dialog
+            pass
         self.accept()
 
 
-__all__ = ["OutputLanguageDialog", "PREF_KEY_DOCS_THEME"]
+__all__ = [
+    "OutputLanguageDialog",
+    "PREF_KEY_DOCS_THEME",
+    "PREF_KEY_TRANSLATE_POSITIONS",
+]

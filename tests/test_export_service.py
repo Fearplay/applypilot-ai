@@ -1036,6 +1036,154 @@ def test_two_column_sidebar_paints_full_height_page_stripe():
         assert RESUME_THEMES[slug].accent.lower() in html.lower(), slug
 
 
+def test_two_column_sidebar_uses_symmetric_mirror_gradient_for_seamless_pages():
+    """Every two-column sidebar preset must ship a 3-stop SYMMETRIC gradient
+    (``accent 0%, accent_dark 50%, accent 100%``) so the colour at the
+    bottom of one tile / printed page matches the colour at the top of
+    the next, eliminating the visible step the user complained about
+    where ``accent_dark`` -> ``accent`` flashed at every page break.
+
+    Regression net for the "weird transition between pages" report;
+    fail this and resumes that overflow to a second page will once
+    again show a teal seam roughly 1/2 the way down the document.
+    """
+    from src.services.document_themes import (
+        RESUME_THEMES,
+        tailored_resume_to_styled_html,
+    )
+
+    resume = TailoredResume(
+        name="Jan Novak",
+        professional_summary="Tester.",
+        technical_skills=["Python"],
+    )
+    candidate = CandidateProfile(full_name="Jan Novak")
+
+    sidebar_slugs = [
+        slug
+        for slug, theme in RESUME_THEMES.items()
+        if theme.layout_slug == "two_column_sidebar"
+    ]
+    assert sidebar_slugs, "test sanity: at least one sidebar preset must ship"
+
+    for slug in sidebar_slugs:
+        theme = RESUME_THEMES[slug]
+        html = tailored_resume_to_styled_html(
+            resume, candidate, output_language="en", theme=slug
+        )
+        compact = html.replace(" ", "").replace("\n", "")
+        accent = theme.accent.lower()
+        accent_dark = theme.accent_dark.lower()
+        compact_lower = compact.lower()
+        # The 3-stop mirror gradient: accent 0% -> accent_dark 50% ->
+        # accent 100%. We assert the substring (with no spaces) appears
+        # both in the .page tiled background and in the .bg-stripe
+        # fixed-position stripe so screen preview AND print pages get
+        # the seamless rhythm.
+        mirror_fragment = (
+            f"linear-gradient(180deg,{accent}0%,{accent_dark}50%,{accent}100%)"
+        )
+        occurrences = compact_lower.count(mirror_fragment)
+        assert occurrences >= 2, (
+            f"theme {slug!r} must use the symmetric mirror gradient "
+            f"in BOTH .page and .bg-stripe; found {occurrences} match(es)"
+        )
+        # Belt and braces: the legacy 2-stop form (``accent 0%, accent_dark
+        # 100%``) MUST NOT appear, otherwise some print engines would
+        # fall back to it and resurrect the seam.
+        legacy_fragment = (
+            f"linear-gradient(180deg,{accent}0%,{accent_dark}100%)"
+        )
+        assert legacy_fragment not in compact_lower, (
+            f"theme {slug!r} still ships the old 2-stop gradient "
+            f"that produces visible page-break seams"
+        )
+
+
+def test_two_column_main_headings_use_padding_top_for_page_break_breathing_room():
+    """Headings that land at the top of a new printed page must keep
+    their top whitespace. Margins collapse at the top of a paginated
+    page (CSS3 paged-media spec), so we use ``padding-top`` instead -
+    padding survives the page break and gives the next section the
+    breathing room the user asked for in the screenshot where
+    "VZDĚLÁNÍ" was jammed against the very top of page 2."""
+    from src.services.document_themes import (
+        RESUME_THEMES,
+        tailored_resume_to_styled_html,
+    )
+
+    resume = TailoredResume(
+        name="Jan Novak",
+        professional_summary="Tester.",
+        technical_skills=["Python"],
+    )
+    candidate = CandidateProfile(full_name="Jan Novak")
+
+    sidebar_slugs = [
+        slug
+        for slug, theme in RESUME_THEMES.items()
+        if theme.layout_slug == "two_column_sidebar"
+    ]
+
+    for slug in sidebar_slugs:
+        html = tailored_resume_to_styled_html(
+            resume, candidate, output_language="en", theme=slug
+        )
+        compact = html.replace(" ", "").replace("\n", "")
+        # The new rule replaces the old ``margin-top:7mm`` with a
+        # padding-top that survives page breaks. We assert padding-top
+        # is set on the secondary headings AND that the buggy margin-top
+        # collapse-prone wording is gone.
+        assert ".mainh2:not(:first-child){padding-top:10mm" in compact, slug
+        # The legacy "margin-top:7mm" rule must NOT come back; that's
+        # exactly what gets collapsed at the top of a printed page.
+        assert ".mainh2:not(:first-child){margin-top:7mm}" not in compact, slug
+
+
+def test_single_column_layouts_use_padding_top_on_section_block():
+    """Single-column layouts wrap each section in ``<section class='block'>``;
+    the breathing-room fix lives on ``section.block`` itself with a
+    ``:first-of-type`` reset so the very first section stays flush
+    against the title block while subsequent sections get a 7mm padding
+    that survives page breaks. Verifies the same anti-margin-collapse
+    treatment we apply to the two-column sidebar."""
+    from src.services.document_themes import (
+        RESUME_THEMES,
+        tailored_resume_to_styled_html,
+    )
+
+    resume = TailoredResume(
+        name="Jan Novak",
+        professional_summary="Tester.",
+        technical_skills=["Python"],
+    )
+    candidate = CandidateProfile(full_name="Jan Novak")
+
+    target_layouts = {
+        "single_column_serif",
+        "single_column_minimal",
+        "centered_header_band",
+    }
+    target_slugs = [
+        slug
+        for slug, theme in RESUME_THEMES.items()
+        if theme.layout_slug in target_layouts
+    ]
+    assert target_slugs, "test sanity: at least one single-column preset ships"
+
+    for slug in target_slugs:
+        html = tailored_resume_to_styled_html(
+            resume, candidate, output_language="en", theme=slug
+        )
+        compact = html.replace(" ", "").replace("\n", "")
+        assert "section.block{padding-top:7mm" in compact, slug
+        assert "section.block:first-of-type{padding-top:0}" in compact, slug
+        # The old ``margin-bottom:7mm`` rule on every section.block was
+        # the original cause of the cramped page-2 top edge; it must
+        # be gone now that padding-top carries the spacing.
+        assert "section.block{margin-bottom:7mm}" not in compact, slug
+
+
 def test_export_persists_resolved_theme_on_package(
     tmp_path: Path, fake_provider, sample_job_text, sample_cv_text
 ):

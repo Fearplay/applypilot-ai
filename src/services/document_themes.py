@@ -963,6 +963,19 @@ def _certifications_html(resume: TailoredResume, theme: ResumeTheme) -> str:
 #    / education rows never split mid-section across pages, and section
 #    headings never end up alone at the bottom of a page above an empty
 #    block.  ``orphans`` / ``widows`` keeps prose paragraphs readable.
+#
+#    INTER-SECTION SPACING USES ``padding-top``, NOT ``margin-top``.
+#    CSS Paged Media collapses the ``margin-top`` of an element that
+#    lands at the top of a new printed page to zero (the spec calls
+#    this "margin truncation").  Resumes that overflow onto a second
+#    page therefore showed the next section heading - "VZDĚLÁNÍ" in
+#    the user's screenshot - jammed against the very top edge of page
+#    2 with no breathing room.  Padding survives the page break (it
+#    is part of the box, not a separating gap), so every layout below
+#    pushes the gap onto ``padding-top`` of the section / heading.
+#    Result: on a single page the rhythm looks identical to the old
+#    margin-based version, but on a page break the new page now starts
+#    with the same ~7-10mm of whitespace the user expected.
 _CSS_BASE_PAGE = """
 *{box-sizing:border-box;margin:0;padding:0}
 @page{size:A4;margin:0}
@@ -1005,12 +1018,33 @@ def _two_column_css(theme: ResumeTheme) -> str:
     # ``.sidebar`` stays transparent so it never repaints on top of
     # either layer; its content (name, contact, skills) sits over the
     # tiled / fixed teal background and reads identically.
+    #
+    # MIRROR GRADIENT (anti-seam trick).  Both layers use a 3-stop
+    # symmetric gradient:
+    #
+    #     accent  0%  ->  accent_dark  50%  ->  accent  100%
+    #
+    # The 0% colour and the 100% colour are IDENTICAL.  This matters
+    # at every page-break boundary:
+    #
+    # - Tiled .page background:  the bottom of one tile (accent) meets
+    #   the top of the next tile (accent), so there is NO visible step
+    #   where ``repeat-y`` reseeds the gradient.
+    # - Fixed .bg-stripe in print: the bottom of page N (accent) meets
+    #   the top of page N+1 (accent), so the user no longer sees the
+    #   ugly accent_dark -> accent jump that screenshot 1 highlighted.
+    #
+    # The user still gets a subtle band that fades to accent_dark in
+    # the middle and brightens back to accent at the edges, so the
+    # design intent (gradient sidebar) is preserved while the seam is
+    # gone.  Do NOT "simplify" this back to a 2-stop gradient - the
+    # seam will return the moment a CV spills onto a second page.
     return f"""
 {_CSS_BASE_PAGE}
 html,body{{font-family:{theme.body_font};color:{theme.text_primary};background:#F8FAFC;line-height:1.45;font-size:10.5pt}}
 .bg-stripe{{display:none}}
-@media print{{.bg-stripe{{display:block;position:fixed;top:0;left:50%;transform:translateX(-105mm);width:73mm;height:100vh;background:linear-gradient(180deg,{theme.accent} 0%,{theme.accent_dark} 100%);-webkit-print-color-adjust:exact;print-color-adjust:exact;z-index:-1}}}}
-.page{{max-width:210mm;min-height:297mm;margin:0 auto;box-shadow:0 8px 30px rgba(15,23,42,0.08);display:grid;grid-template-columns:73mm 1fr;align-items:stretch;background-color:#FFFFFF;background-image:linear-gradient(180deg,{theme.accent} 0%,{theme.accent_dark} 100%);background-size:73mm 297mm;background-repeat:repeat-y;background-position:top left;position:relative}}
+@media print{{.bg-stripe{{display:block;position:fixed;top:0;left:50%;transform:translateX(-105mm);width:73mm;height:100vh;background:linear-gradient(180deg,{theme.accent} 0%,{theme.accent_dark} 50%,{theme.accent} 100%);-webkit-print-color-adjust:exact;print-color-adjust:exact;z-index:-1}}}}
+.page{{max-width:210mm;min-height:297mm;margin:0 auto;box-shadow:0 8px 30px rgba(15,23,42,0.08);display:grid;grid-template-columns:73mm 1fr;align-items:stretch;background-color:#FFFFFF;background-image:linear-gradient(180deg,{theme.accent} 0%,{theme.accent_dark} 50%,{theme.accent} 100%);background-size:73mm 297mm;background-repeat:repeat-y;background-position:top left;position:relative}}
 .sidebar{{color:{theme.on_accent};padding:14mm 9mm 12mm 9mm;position:relative;z-index:1}}
 .sidebar h1{{font-family:{theme.heading_font};font-size:20pt;line-height:1.1;font-weight:800;letter-spacing:-0.02em;margin-bottom:3mm}}
 .sb-section{{margin-top:7mm}}
@@ -1028,7 +1062,7 @@ html,body{{font-family:{theme.body_font};color:{theme.text_primary};background:#
 .lang-row .lvl{{font-size:8.5pt;color:{theme.accent_soft};font-weight:600}}
 .main{{padding:14mm 12mm 12mm 12mm}}
 .main h2{{font-family:{theme.heading_font};font-size:11pt;text-transform:uppercase;letter-spacing:0.16em;color:{theme.accent};font-weight:800;border-bottom:2px solid {theme.rule};padding-bottom:1.2mm;margin:0 0 4mm 0}}
-.main h2:not(:first-child){{margin-top:7mm}}
+.main h2:not(:first-child){{padding-top:10mm;margin-top:0}}
 .summary{{font-size:10pt;color:{theme.text_primary};line-height:1.55}}
 .job{{margin-bottom:5mm}}
 .job-header{{display:flex;justify-content:space-between;align-items:baseline;gap:3mm;margin-bottom:0.5mm}}
@@ -1060,7 +1094,8 @@ html,body{{font-family:{theme.body_font};color:{theme.text_primary};background:#
 .contact-bar{{display:flex;justify-content:center;flex-wrap:wrap;gap:6mm;margin-bottom:9mm;font-size:9.5pt;color:{theme.text_primary}}}
 .contact-bar .ic{{color:{theme.accent};margin-right:1.5mm}}
 .contact-bar a{{color:{theme.text_primary};text-decoration:none;border-bottom:1px dotted {theme.accent_soft}}}
-section.block{{margin-bottom:7mm}}
+section.block{{padding-top:7mm;margin-bottom:0}}
+section.block:first-of-type{{padding-top:0}}
 section.block h2{{font-family:{theme.heading_font};font-size:14pt;color:{theme.accent_dark};font-weight:700;letter-spacing:0.04em;border-bottom:1px solid {theme.rule};padding-bottom:1.5mm;margin-bottom:4mm;text-transform:uppercase}}
 .summary{{font-size:10.5pt;color:{theme.text_primary};line-height:1.6}}
 .job{{margin-bottom:5mm}}
@@ -1099,7 +1134,8 @@ html,body{{font-family:{theme.body_font};color:{theme.text_primary};background:#
 .contact-bar{{display:flex;flex-wrap:wrap;gap:5mm;font-size:10pt;color:{theme.text_primary};margin-bottom:8mm}}
 .contact-bar .ic{{color:{theme.accent};margin-right:1.2mm}}
 .contact-bar a{{color:{theme.text_primary};text-decoration:none;border-bottom:1px solid {theme.accent_soft}}}
-section.block{{margin-bottom:7mm}}
+section.block{{padding-top:7mm;margin-bottom:0}}
+section.block:first-of-type{{padding-top:0}}
 section.block h2{{font-family:{theme.heading_font};font-size:11pt;color:{theme.accent};font-weight:700;letter-spacing:0.18em;text-transform:uppercase;margin-bottom:3mm}}
 section.block h2::after{{content:"";display:block;width:14mm;height:1.4pt;background:{theme.rule};margin-top:1.5mm}}
 .summary{{font-size:10.5pt;color:{theme.text_primary};line-height:1.65}}
@@ -1139,7 +1175,8 @@ html,body{{font-family:{theme.body_font};color:{theme.text_primary};background:#
 .banner .contact-bar a{{color:{theme.on_accent};text-decoration:none;border-bottom:1px dotted rgba(255,255,255,0.5)}}
 .banner .contact-bar .ic{{color:{theme.accent_soft};margin-right:1.2mm}}
 .body{{padding:12mm 18mm 16mm 18mm}}
-section.block{{margin-bottom:7mm}}
+section.block{{padding-top:7mm;margin-bottom:0}}
+section.block:first-of-type{{padding-top:0}}
 section.block h2{{font-family:{theme.heading_font};font-size:12pt;color:{theme.accent_dark};font-weight:800;letter-spacing:0.14em;text-transform:uppercase;border-bottom:2px solid {theme.rule};padding-bottom:1.5mm;margin-bottom:4mm}}
 .summary{{font-size:10.5pt;color:{theme.text_primary};line-height:1.6;text-align:justify}}
 .two-col{{display:grid;grid-template-columns:1fr 1fr;gap:9mm}}

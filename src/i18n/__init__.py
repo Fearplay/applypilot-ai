@@ -481,6 +481,14 @@ _STRINGS: dict[str, dict[str, str]] = {
         "out_lang.style.forest_sidebar": "Forest sidebar (two-column)",
         "out_lang.style.indigo_header": "Indigo header band (single column)",
         "out_lang.style.sunset_modern": "Sunset coral (two-column)",
+        "out_lang.translate_positions.label": "Translate position titles",
+        "out_lang.translate_positions.tooltip": (
+            "Translate role titles and company decorations into the chosen "
+            "output language. Uncheck to keep titles like \"Senior Software "
+            "QA Engineer\" verbatim from your CV / LinkedIn even on a Czech "
+            "resume (bullets, summary and education still follow the picked "
+            "language)."
+        ),
         # ---- settings dialog ----
         "settings.title": "AI provider settings",
         "settings.section": "AI provider",
@@ -1037,6 +1045,14 @@ _STRINGS: dict[str, dict[str, str]] = {
         "out_lang.style.forest_sidebar": "Lesní postranní panel (dva sloupce)",
         "out_lang.style.indigo_header": "Indigová hlavička (jeden sloupec)",
         "out_lang.style.sunset_modern": "Korálová (dva sloupce)",
+        "out_lang.translate_positions.label": "Přeložit názvy pozic",
+        "out_lang.translate_positions.tooltip": (
+            "Přeloží názvy pozic a doplňky u zaměstnavatelů do zvoleného "
+            "jazyka výstupu. Odškrtni, pokud chceš nechat názvy jako "
+            "\u201eSenior Software QA Engineer\u201c v původním znění z CV "
+            "/ LinkedInu i v českém životopise (odrážky, shrnutí a "
+            "vzdělání se pořád přeloží podle vybraného jazyka)."
+        ),
         "settings.title": "Nastavení AI poskytovatele",
         "settings.section": "AI poskytovatel",
         "settings.tip_html": (

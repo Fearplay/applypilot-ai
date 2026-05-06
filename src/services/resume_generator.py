@@ -103,40 +103,184 @@ _EDU_INSTITUTION_TRANSLATIONS_EN: dict[str, str] = {
 # experience subtitles (job rows). Matched whole-word, case-insensitive,
 # diacritics-insensitive. The values stay capitalised because they end up in
 # resume bullets / subtitles.
+#
+# IMPORTANT: ``_translate_text_diacritics_insensitive`` matches the LONGEST
+# key first, so multi-word phrases ("softwarovy qa inzenyr") win over their
+# single-word substrings ("inzenyr"). This is what keeps "Senior Software
+# QA Engineer" from collapsing into "Senior Software QA Inženýr" - the
+# multi-word entry always fires first. New entries should follow the same
+# pattern: when a Czech form appears as a substring of a longer Czech form
+# you expect the user to actually have on their CV, both must be in the
+# table, and the longest one wins.
 _EXPERIENCE_TRANSLATIONS_EN: dict[str, str] = {
+    # Core dev roles (single + multi-word forms so longest-match wins).
     "vyvojar": "Developer",
     "vyvojarka": "Developer",
-    "stazista": "Intern",
-    "staz": "Internship",
-    "tester": "Tester",
-    "testerka": "Tester",
-    "softwarovy inzenyr": "Software Engineer",
     "softwarovy vyvojar": "Software Developer",
+    "softwarovy inzenyr": "Software Engineer",
+    "softwarova inzenyrka": "Software Engineer",
     "programator": "Programmer",
-    "vedouci": "Lead",
+    "programatorka": "Programmer",
     "junior vyvojar": "Junior Developer",
     "senior vyvojar": "Senior Developer",
+    "junior softwarovy inzenyr": "Junior Software Engineer",
+    "senior softwarovy inzenyr": "Senior Software Engineer",
+    # Frontend / backend / fullstack / mobile.
+    "frontendovy vyvojar": "Frontend Developer",
+    "backendovy vyvojar": "Backend Developer",
+    "fullstack vyvojar": "Fullstack Developer",
+    "mobilni vyvojar": "Mobile Developer",
+    "android vyvojar": "Android Developer",
+    "ios vyvojar": "iOS Developer",
+    "webovy vyvojar": "Web Developer",
+    # QA / testing.
+    "tester": "Tester",
+    "testerka": "Tester",
+    "softwarovy tester": "Software Tester",
+    "manualni tester": "Manual QA Tester",
+    "qa inzenyr": "QA Engineer",
+    "qa inzenyrka": "QA Engineer",
+    "softwarovy qa inzenyr": "Software QA Engineer",
+    "softwarova qa inzenyrka": "Software QA Engineer",
+    "qa automatizace": "QA Automation Engineer",
+    "automatizovany tester": "QA Automation Engineer",
+    # Data / ML / AI.
+    "datovy analytik": "Data Analyst",
+    "datova analytička": "Data Analyst",
+    "analytik dat": "Data Analyst",
+    "datovy vedec": "Data Scientist",
+    "datova vedkyne": "Data Scientist",
+    "datovy inzenyr": "Data Engineer",
+    "datova inzenyrka": "Data Engineer",
+    "ml inzenyr": "Machine Learning Engineer",
+    "inzenyr strojoveho uceni": "Machine Learning Engineer",
+    "ai inzenyr": "AI Engineer",
+    "ai vyvojar": "AI Engineer",
+    "genai inzenyr": "GenAI Engineer",
+    # Ops / cloud / security.
+    "devops inzenyr": "DevOps Engineer",
+    "sre inzenyr": "Site Reliability Engineer",
+    "cloudovy inzenyr": "Cloud Engineer",
+    "bezpecnostni inzenyr": "Security Engineer",
+    "sitovy inzenyr": "Network Engineer",
+    "systemovy administrator": "System Administrator",
+    "spravce databaze": "Database Administrator",
+    "it podpora": "IT Support",
+    "spravce site": "Network Administrator",
+    # Management / lead / agile.
+    "vedouci tymu": "Team Lead",
+    "vedouci": "Lead",
+    "tech lead": "Tech Lead",
+    "technicky vedouci": "Tech Lead",
+    "technicky reditel": "CTO",
+    "engineering manager": "Engineering Manager",
+    "produktovy manazer": "Product Manager",
+    "projektovy manazer": "Project Manager",
+    "scrum master": "Scrum Master",
+    "product owner": "Product Owner",
+    "vlastnik produktu": "Product Owner",
+    # Design / business / other office.
+    "ux designer": "UX Designer",
+    "ui designer": "UI Designer",
+    "ui ux designer": "UI/UX Designer",
+    "graficky designer": "Graphic Designer",
+    "businessovy analytik": "Business Analyst",
+    "business analytik": "Business Analyst",
+    "obchodni analytik": "Business Analyst",
+    # Internships / contracting / employment-type tokens.
+    "stazista": "Intern",
+    "stazistka": "Intern",
+    "staz": "Internship",
+    "stazista vyvojar": "Developer Intern",
     "kontrakt": "Contract",
     "castecny uvazek": "Part-time",
     "plny uvazek": "Full-time",
     "osvc": "Self-employed",
     "brigada": "Part-time",
+    "freelance": "Freelance",
+    "konzultant": "Consultant",
+    "konzultantka": "Consultant",
 }
 
 _EXPERIENCE_TRANSLATIONS_CS: dict[str, str] = {
+    # Core dev roles (single + multi-word so longest-match wins).
     "developer": "Vývojář",
-    "intern": "Stážista",
-    "internship": "Stáž",
-    "tester": "Tester",
-    "software engineer": "Softwarový inženýr",
     "software developer": "Softwarový vývojář",
+    "software engineer": "Softwarový inženýr",
+    "junior software engineer": "Junior softwarový inženýr",
+    "senior software engineer": "Senior softwarový inženýr",
     "programmer": "Programátor",
     "junior developer": "Junior vývojář",
     "senior developer": "Senior vývojář",
+    "junior programmer": "Junior programátor",
+    "senior programmer": "Senior programátor",
+    # Frontend / backend / fullstack / mobile.
+    "frontend developer": "Frontendový vývojář",
+    "backend developer": "Backendový vývojář",
+    "fullstack developer": "Fullstack vývojář",
+    "full stack developer": "Fullstack vývojář",
+    "mobile developer": "Mobilní vývojář",
+    "android developer": "Android vývojář",
+    "ios developer": "iOS vývojář",
+    "web developer": "Webový vývojář",
+    # QA / testing.
+    "tester": "Tester",
+    "software tester": "Softwarový tester",
+    "manual qa tester": "Manuální tester",
+    "qa engineer": "QA inženýr",
+    "qa tester": "QA tester",
+    "software qa engineer": "Softwarový QA inženýr",
+    "junior software qa engineer": "Junior softwarový QA inženýr",
+    "senior software qa engineer": "Senior softwarový QA inženýr",
+    "qa automation engineer": "QA automatizační inženýr",
+    "automation tester": "Automatizační tester",
+    "test engineer": "Test inženýr",
+    # Data / ML / AI.
+    "data analyst": "Datový analytik",
+    "data scientist": "Datový vědec",
+    "data engineer": "Datový inženýr",
+    "machine learning engineer": "Inženýr strojového učení",
+    "ml engineer": "ML inženýr",
+    "ai engineer": "AI inženýr",
+    "ai software engineer": "AI softwarový inženýr",
+    "genai engineer": "GenAI inženýr",
+    # Ops / cloud / security.
+    "devops engineer": "DevOps inženýr",
+    "site reliability engineer": "Site Reliability inženýr",
+    "cloud engineer": "Cloudový inženýr",
+    "security engineer": "Bezpečnostní inženýr",
+    "network engineer": "Síťový inženýr",
+    "system administrator": "Systémový administrátor",
+    "database administrator": "Správce databáze",
+    "it support": "IT podpora",
+    "network administrator": "Správce sítě",
+    # Management / lead / agile.
+    "team lead": "Vedoucí týmu",
+    "team leader": "Vedoucí týmu",
+    "tech lead": "Technický vedoucí",
+    "engineering manager": "Engineering manažer",
+    "product manager": "Produktový manažer",
+    "project manager": "Projektový manažer",
+    "scrum master": "Scrum master",
+    "product owner": "Vlastník produktu",
+    # Design / business / other office.
+    "ux designer": "UX designér",
+    "ui designer": "UI designér",
+    "ui/ux designer": "UI/UX designér",
+    "graphic designer": "Grafický designér",
+    "business analyst": "Business analytik",
+    # Internships / contracting / employment-type tokens.
+    "intern": "Stážista",
+    "internship": "Stáž",
+    "trainee": "Stážista",
+    "developer intern": "Stážista vývojář",
     "contract": "Kontrakt",
+    "contractor": "Kontraktor",
     "part-time": "Částečný úvazek",
     "full-time": "Plný úvazek",
     "self-employed": "OSVČ",
+    "freelance": "Freelance",
+    "consultant": "Konzultant",
     # Mid-sentence English noise that the AI sometimes leaves inside an
     # otherwise Czech bullet / summary ("a acting QA Lead s 4 lety
     # zkušeností"). Mapped to the closest Czech equivalent so the
@@ -381,7 +525,12 @@ def _translate_period(period: str, output_language: str) -> str:
     return period
 
 
-def _fixup_education_language(resume: TailoredResume, output_language: str) -> None:
+def _fixup_education_language(
+    resume: TailoredResume,
+    output_language: str,
+    *,
+    translate_positions: bool = True,
+) -> None:
     """Translate residual strings to the target language across education,
     experience and project sections.
 
@@ -390,6 +539,15 @@ def _fixup_education_language(resume: TailoredResume, output_language: str) -> N
     2021") or a Czech role title ("Vývojář Python") inside a resume the user
     asked for in English. The reverse happens too. We fix both directions
     here so the styled HTML / DOCX export is consistent.
+
+    ``translate_positions`` controls the experience / project TITLE +
+    experience SUBTITLE scrub. When False (user opted out via the
+    OutputLanguageDialog checkbox), we still translate periods, education
+    rows, bullets and summary into ``output_language`` but leave the role
+    title and the company name verbatim from the candidate input. This is
+    the path users pick when they want ``"Senior Software QA Engineer"``
+    to stay verbatim on a Czech resume rather than getting translated to
+    ``"Senior softwarový QA inženýr"``.
     """
     code = (output_language or "en").strip().lower()
     if code == "cs":
@@ -401,20 +559,21 @@ def _fixup_education_language(resume: TailoredResume, output_language: str) -> N
                 section.subtitle = _translate_edu_text(section.subtitle, edu_table)
             section.period = _translate_period(section.period, "cs")
         for section in resume.experience:
-            if section.title and (
-                _looks_english(section.title)
-                or _contains_translation_keys(section.title, _EXPERIENCE_TRANSLATIONS_CS)
-            ):
-                section.title = _translate_text_diacritics_insensitive(
-                    section.title, _EXPERIENCE_TRANSLATIONS_CS
-                )
-            if section.subtitle and (
-                _looks_english(section.subtitle)
-                or _contains_translation_keys(section.subtitle, _EXPERIENCE_TRANSLATIONS_CS)
-            ):
-                section.subtitle = _translate_text_diacritics_insensitive(
-                    section.subtitle, _EXPERIENCE_TRANSLATIONS_CS
-                )
+            if translate_positions:
+                if section.title and (
+                    _looks_english(section.title)
+                    or _contains_translation_keys(section.title, _EXPERIENCE_TRANSLATIONS_CS)
+                ):
+                    section.title = _translate_text_diacritics_insensitive(
+                        section.title, _EXPERIENCE_TRANSLATIONS_CS
+                    )
+                if section.subtitle and (
+                    _looks_english(section.subtitle)
+                    or _contains_translation_keys(section.subtitle, _EXPERIENCE_TRANSLATIONS_CS)
+                ):
+                    section.subtitle = _translate_text_diacritics_insensitive(
+                        section.subtitle, _EXPERIENCE_TRANSLATIONS_CS
+                    )
             section.period = _translate_period(section.period, "cs")
             # Bullets are normally Czech but the AI sometimes leaves
             # an English noise word ("Acting QA Lead v týmu...") that
@@ -426,6 +585,22 @@ def _fixup_education_language(resume: TailoredResume, output_language: str) -> N
                 if _contains_translation_keys(bullet.text, _EXPERIENCE_TRANSLATIONS_CS):
                     bullet.text = _translate_text_diacritics_insensitive(
                         bullet.text, _EXPERIENCE_TRANSLATIONS_CS
+                    )
+        if translate_positions:
+            for section in resume.projects:
+                if section.title and (
+                    _looks_english(section.title)
+                    or _contains_translation_keys(section.title, _EXPERIENCE_TRANSLATIONS_CS)
+                ):
+                    section.title = _translate_text_diacritics_insensitive(
+                        section.title, _EXPERIENCE_TRANSLATIONS_CS
+                    )
+                if section.subtitle and (
+                    _looks_english(section.subtitle)
+                    or _contains_translation_keys(section.subtitle, _EXPERIENCE_TRANSLATIONS_CS)
+                ):
+                    section.subtitle = _translate_text_diacritics_insensitive(
+                        section.subtitle, _EXPERIENCE_TRANSLATIONS_CS
                     )
         # Same trick for the professional summary so "Software QA
         # Engineer a acting QA Lead" doesn't survive in a CZ resume.
@@ -450,14 +625,15 @@ def _fixup_education_language(resume: TailoredResume, output_language: str) -> N
                 )
             section.period = _translate_period(section.period, "en")
         for section in resume.experience:
-            if section.title and _looks_czech(section.title):
-                section.title = _translate_text_diacritics_insensitive(
-                    section.title, _EXPERIENCE_TRANSLATIONS_EN
-                )
-            if section.subtitle and _looks_czech(section.subtitle):
-                section.subtitle = _translate_text_diacritics_insensitive(
-                    section.subtitle, _EXPERIENCE_TRANSLATIONS_EN
-                )
+            if translate_positions:
+                if section.title and _looks_czech(section.title):
+                    section.title = _translate_text_diacritics_insensitive(
+                        section.title, _EXPERIENCE_TRANSLATIONS_EN
+                    )
+                if section.subtitle and _looks_czech(section.subtitle):
+                    section.subtitle = _translate_text_diacritics_insensitive(
+                        section.subtitle, _EXPERIENCE_TRANSLATIONS_EN
+                    )
             section.period = _translate_period(section.period, "en")
             # Symmetric bullet-level scrub for the EN direction so an
             # otherwise English bullet doesn't carry "Stáž v ..." inside.
@@ -466,16 +642,17 @@ def _fixup_education_language(resume: TailoredResume, output_language: str) -> N
                     bullet.text = _translate_text_diacritics_insensitive(
                         bullet.text, _EXPERIENCE_TRANSLATIONS_EN
                     )
-        # Project subtitles often carry stack info ("Vývojář Python | ...").
-        for section in resume.projects:
-            if section.title and _looks_czech(section.title):
-                section.title = _translate_text_diacritics_insensitive(
-                    section.title, _EXPERIENCE_TRANSLATIONS_EN
-                )
-            if section.subtitle and _looks_czech(section.subtitle):
-                section.subtitle = _translate_text_diacritics_insensitive(
-                    section.subtitle, _EXPERIENCE_TRANSLATIONS_EN
-                )
+        if translate_positions:
+            # Project subtitles often carry stack info ("Vývojář Python | ...").
+            for section in resume.projects:
+                if section.title and _looks_czech(section.title):
+                    section.title = _translate_text_diacritics_insensitive(
+                        section.title, _EXPERIENCE_TRANSLATIONS_EN
+                    )
+                if section.subtitle and _looks_czech(section.subtitle):
+                    section.subtitle = _translate_text_diacritics_insensitive(
+                        section.subtitle, _EXPERIENCE_TRANSLATIONS_EN
+                    )
         # And the EN summary - mirror the CS scrub so ``"I worked as a
         # Vývojář Python"`` collapses to plain English.
         if resume.professional_summary and _contains_translation_keys(
@@ -1467,10 +1644,27 @@ def generate_tailored_resume(
     answers: AnswersBundle | None = None,
     evidence: Sequence[EvidenceItem] = (),
     output_language: str = "en",
+    translate_positions: bool = True,
 ) -> TailoredResume:
+    """Generate a TailoredResume tailored to ``job`` from ``candidate``.
+
+    ``translate_positions`` controls both the AI prompt (the model is told
+    whether to translate role titles into ``output_language``) and the
+    deterministic post-processing pass. Default ``True`` matches the
+    historical behaviour where ``"Junior Developer"`` would be rendered as
+    ``"Junior vývojář"`` on a Czech resume; setting it to ``False`` keeps
+    role titles + company subtitles verbatim from the candidate input
+    while still translating bullets, summary, periods and education rows
+    into ``output_language``.
+    """
     answers = answers or AnswersBundle()
     resume = provider.generate_resume(
-        job, candidate, answers, evidence, output_language=output_language
+        job,
+        candidate,
+        answers,
+        evidence,
+        output_language=output_language,
+        translate_positions=translate_positions,
     )
     # Order matters: translate residual strings first so dedup compares the
     # post-translation form (otherwise a Czech twin and an English twin
@@ -1480,19 +1674,25 @@ def generate_tailored_resume(
     # additions are real GitHub repos), THEN strip incomplete education
     # rows the AI emitted without an institution, THEN backfill periods,
     # THEN ensure at least one project survived.
-    _fixup_education_language(resume, output_language)
+    _fixup_education_language(
+        resume, output_language, translate_positions=translate_positions
+    )
     _dedup_resume_sections(resume, output_language)
     _enforce_bullet_floor(resume, candidate)
     ensure_experience_section(resume, candidate, output_language)
     # Safety-net rows are copied from the structured candidate profile, which
     # may still be in the source language. Run the output cleanup again so
     # injected rows get translated and collapsed with any AI-emitted twin.
-    _fixup_education_language(resume, output_language)
+    _fixup_education_language(
+        resume, output_language, translate_positions=translate_positions
+    )
     _dedup_resume_sections(resume, output_language)
     _strip_invented_projects(resume, candidate)
     _strip_incomplete_education(resume)
     _backfill_periods(resume, candidate)
-    _fixup_education_language(resume, output_language)
+    _fixup_education_language(
+        resume, output_language, translate_positions=translate_positions
+    )
     _dedup_resume_sections(resume, output_language)
     # Mirror the candidate's languages onto the resume on the first
     # render so subsequent refines have a place to apply edits like
@@ -2052,6 +2252,7 @@ def refine_tailored_resume(
     evidence: Sequence[EvidenceItem] = (),
     output_language: str = "en",
     previous_explanation: str = "",
+    translate_positions: bool = True,
 ) -> RefinedResume:
     """Re-generate the resume incorporating the user's textual feedback.
 
@@ -2067,16 +2268,24 @@ def refine_tailored_resume(
     with the suggestion it made earlier - without that context, the
     user typing "ano" after the AI asked "Mohu sma\u017eat X?" would
     produce a no-op refine.
+
+    ``translate_positions`` mirrors the same flag on
+    :func:`generate_tailored_resume`: when ``False``, role titles +
+    company subtitles stay in their source language even on a Czech /
+    English resume.
     """
     answers = answers or AnswersBundle()
     refined = provider.refine_resume(
         current_resume, feedback, job, candidate, answers, evidence,
         output_language=output_language,
         previous_explanation=previous_explanation,
+        translate_positions=translate_positions,
     )
     resume = refined.resume
 
-    _fixup_education_language(resume, output_language)
+    _fixup_education_language(
+        resume, output_language, translate_positions=translate_positions
+    )
     _dedup_resume_sections(resume, output_language)
     _enforce_bullet_floor(resume, candidate)
 
@@ -2120,7 +2329,9 @@ def refine_tailored_resume(
     dropped_projects = _strip_invented_projects(resume, candidate)
     _strip_incomplete_education(resume)
     _backfill_periods(resume, candidate)
-    _fixup_education_language(resume, output_language)
+    _fixup_education_language(
+        resume, output_language, translate_positions=translate_positions
+    )
     _dedup_resume_sections(resume, output_language)
     if not deleted_all_projects:
         ensure_projects_section(resume, candidate)

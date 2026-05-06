@@ -48,6 +48,18 @@ class GeneratedApplicationPackage(BaseModel):
             "slug at save time so the package always remembers a real theme."
         ),
     )
+    translate_positions: bool = Field(
+        default=True,
+        description=(
+            "Whether role titles + company subtitles are translated into "
+            "`output_language` (default ``True``, historical behaviour) or "
+            "kept verbatim from the candidate input (``False``). Bullets, "
+            "summary, periods and education rows always follow "
+            "`output_language` regardless. Toggled via the "
+            "``Translate position titles`` checkbox in the output-language "
+            "dialog."
+        ),
+    )
 
 
 __all__ = ["GeneratedApplicationPackage"]

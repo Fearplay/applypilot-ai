@@ -165,6 +165,7 @@ class _StubProvider(BaseAIProvider):
         self.received_feedback: str | None = None
         self.received_lang: str | None = None
         self.received_previous_explanation: str | None = None
+        self.received_translate_positions: bool | None = None
 
     def refine_resume(  # type: ignore[override]
         self,
@@ -176,10 +177,12 @@ class _StubProvider(BaseAIProvider):
         evidence: Sequence[EvidenceItem] = (),
         output_language: str = "en",
         previous_explanation: str = "",
+        translate_positions: bool = True,
     ) -> RefinedResume:
         self.received_feedback = feedback
         self.received_lang = output_language
         self.received_previous_explanation = previous_explanation
+        self.received_translate_positions = translate_positions
         return self._refined
 
     # --- everything else is a NotImplementedError so the test never
@@ -196,7 +199,10 @@ class _StubProvider(BaseAIProvider):
     def generate_match_report(self, job, candidate, answers, evidence=(), output_language="en"):
         raise NotImplementedError
 
-    def generate_resume(self, job, candidate, answers, evidence=(), output_language="en"):
+    def generate_resume(
+        self, job, candidate, answers, evidence=(),
+        output_language="en", translate_positions=True,
+    ):
         raise NotImplementedError
 
     def generate_cover_letter(self, job, candidate, answers, output_language="en"):
@@ -220,7 +226,10 @@ class _GenerateStubProvider(_StubProvider):
         super().__init__(RefinedResume(resume=resume, explanation=""))
         self._resume = resume
 
-    def generate_resume(self, job, candidate, answers, evidence=(), output_language="en"):
+    def generate_resume(  # type: ignore[override]
+        self, job, candidate, answers, evidence=(),
+        output_language="en", translate_positions=True,
+    ):
         return self._resume
 
 
@@ -656,6 +665,203 @@ def test_fixup_education_language_still_translates_english_to_czech():
     assert "Bakal" in edu.title
     assert "Provozně ekonomická" in edu.subtitle
     assert "Praha" in edu.subtitle
+
+
+# ---------------------------------------------------------------------------
+# translate_positions=False keeps role titles + company subtitles in the
+# source language while still translating bullets, summary, periods and
+# education rows into OUTPUT_LANGUAGE. This is the opt-out path the user
+# picks via the new "Translate position titles" checkbox.
+# ---------------------------------------------------------------------------
+
+
+def test_fixup_education_language_keeps_position_when_translate_positions_false_cs():
+    """User asked for a Czech resume but ticked OFF "Translate position titles".
+
+    Outcome: the experience section title/subtitle stay verbatim in
+    English ("Senior Software QA Engineer" @ "Avast Software"), but the
+    period, the bullet and the education section still translate into
+    Czech.
+    """
+    resume = TailoredResume(
+        name="X",
+        professional_summary="QA.",
+        education=[
+            ResumeSection(
+                title="Bachelor of Computer Science",
+                subtitle="Faculty of Economics and Management, Prague",
+                period="2018 - 2021",
+            ),
+        ],
+        experience=[
+            ResumeSection(
+                title="Senior Software QA Engineer",
+                subtitle="Avast Software",
+                period="06/2020 - present",
+                bullets=[ResumeBullet(text="Internship at Avast Software.")],
+            ),
+        ],
+        projects=[
+            ResumeSection(
+                title="QA Automation Engineer",
+                subtitle="Internship",
+                bullets=[ResumeBullet(text="Built test pipelines.")],
+            ),
+        ],
+    )
+    _fixup_education_language(resume, "cs", translate_positions=False)
+    exp = resume.experience[0]
+    assert exp.title == "Senior Software QA Engineer"
+    assert exp.subtitle == "Avast Software"
+    assert exp.period == "06/2020 - současnost"
+    proj = resume.projects[0]
+    assert proj.title == "QA Automation Engineer"
+    assert proj.subtitle == "Internship"
+    edu = resume.education[0]
+    assert "Bakal" in edu.title
+    assert "Provozně ekonomická" in edu.subtitle
+
+
+def test_fixup_education_language_keeps_position_when_translate_positions_false_en():
+    """Mirror direction: Czech CV, English resume, opt-out keeps the
+    Czech role title / company name verbatim while still anglicising
+    the period and education row."""
+    resume = TailoredResume(
+        name="X",
+        professional_summary="QA.",
+        education=[
+            ResumeSection(
+                title="Provozně ekonomická fakulta",
+                subtitle="Česká zemědělská univerzita v Praze",
+                period="ledna 2021 - července 2023",
+            ),
+        ],
+        experience=[
+            ResumeSection(
+                title="Vývojář Python",
+                subtitle="CreatiWeb",
+                period="06/2020 - současnost",
+                bullets=[ResumeBullet(text="Worked on chatbots.")],
+            ),
+        ],
+        projects=[
+            ResumeSection(
+                title="Senior vývojář",
+                subtitle="OSVČ",
+                bullets=[ResumeBullet(text="Shipped product.")],
+            ),
+        ],
+    )
+    _fixup_education_language(resume, "en", translate_positions=False)
+    exp = resume.experience[0]
+    assert exp.title == "Vývojář Python"
+    assert exp.subtitle == "CreatiWeb"
+    assert exp.period == "06/2020 - present"
+    proj = resume.projects[0]
+    assert proj.title == "Senior vývojář"
+    assert proj.subtitle == "OSVČ"
+    edu = resume.education[0]
+    assert "Faculty of Economics" in edu.title
+    assert "Czech University of Life Sciences" in edu.subtitle
+
+
+def test_fixup_education_language_default_still_translates_positions_cs():
+    """Sanity check: with the default ``translate_positions=True`` the
+    English title is still anglicised away on a Czech resume so we
+    don't regress the historical behaviour."""
+    resume = TailoredResume(
+        name="X",
+        professional_summary="QA.",
+        experience=[
+            ResumeSection(
+                title="Software QA Engineer",
+                subtitle="Avast Software",
+                period="06/2020 - present",
+                bullets=[ResumeBullet(text="QA work.")],
+            ),
+        ],
+    )
+    _fixup_education_language(resume, "cs")
+    exp = resume.experience[0]
+    assert exp.title == "Softwarový QA inženýr"
+
+
+def test_expanded_dictionary_translates_software_qa_engineer_to_czech():
+    """The ~40-entry expansion of ``_EXPERIENCE_TRANSLATIONS_CS`` must
+    cover ``Software QA Engineer`` so the Czech path no longer leaves
+    the English form on the resume."""
+    resume = TailoredResume(
+        name="X",
+        professional_summary="QA.",
+        experience=[
+            ResumeSection(
+                title="Software QA Engineer",
+                subtitle="Avast Software",
+            ),
+        ],
+    )
+    _fixup_education_language(resume, "cs")
+    assert resume.experience[0].title == "Softwarový QA inženýr"
+
+
+def test_expanded_dictionary_translates_devops_and_data_titles_both_directions():
+    cs_resume = TailoredResume(
+        name="X",
+        professional_summary="QA.",
+        experience=[
+            ResumeSection(title="DevOps Engineer", subtitle="Cloud Co"),
+            ResumeSection(title="Data Analyst", subtitle="Insight Co"),
+            ResumeSection(title="Frontend Developer", subtitle="Web Co"),
+        ],
+    )
+    _fixup_education_language(cs_resume, "cs")
+    titles = [s.title for s in cs_resume.experience]
+    assert "DevOps inženýr" in titles
+    assert "Datový analytik" in titles
+    assert "Frontendový vývojář" in titles
+
+    en_resume = TailoredResume(
+        name="X",
+        professional_summary="QA.",
+        experience=[
+            ResumeSection(title="DevOps inženýr", subtitle="Cloud Co"),
+            ResumeSection(title="Datový analytik", subtitle="Insight Co"),
+            ResumeSection(title="Frontendový vývojář", subtitle="Web Co"),
+        ],
+    )
+    _fixup_education_language(en_resume, "en")
+    titles_en = [s.title for s in en_resume.experience]
+    assert "DevOps Engineer" in titles_en
+    assert "Data Analyst" in titles_en
+    assert "Frontend Developer" in titles_en
+
+
+def test_refine_passes_translate_positions_to_provider():
+    """The refine pipeline must forward ``translate_positions`` to the AI
+    provider so the prompt builder can switch between translation and
+    keep-verbatim modes."""
+    candidate = CandidateProfile(full_name="Test")
+    starting = TailoredResume(
+        name="Test",
+        professional_summary="Sum.",
+        role_targeted_for="QA",
+        projects=[
+            ResumeSection(
+                title="P",
+                bullets=[ResumeBullet(text="Built portfolio.", keywords=[])],
+            ),
+        ],
+    )
+    provider = _StubProvider(
+        RefinedResume(resume=starting, explanation="")
+    )
+    refine_tailored_resume(
+        provider, starting, "Polish the summary.",
+        _make_job(), candidate,
+        output_language="en",
+        translate_positions=False,
+    )
+    assert provider.received_translate_positions is False
 
 
 # ---------------------------------------------------------------------------

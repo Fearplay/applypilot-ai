@@ -100,6 +100,14 @@ class WorkflowState:
     #: resolves the random sentinel to a real slug before storing so every
     #: subsequent renderer call uses the same look (preview, save, export).
     docs_theme: str = "teal_sidebar"
+    #: Whether role titles + company subtitles should be translated into
+    #: ``docs_language`` (default ``True``) or kept verbatim from the
+    #: candidate input (``False``). Driven by the "Translate position
+    #: titles" checkbox in :class:`OutputLanguageDialog`; persisted via
+    #: ``PREF_KEY_TRANSLATE_POSITIONS`` so subsequent runs default to
+    #: the user's last choice. Threaded through every resume / refine
+    #: call so both initial generation and refines respect the toggle.
+    translate_positions: bool = True
     #: Profile entry ids (experience / education) the user picked 'No - skip
     #: it' on inside a discrepancy clarifying question. Filtered out of the
     #: candidate profile right before resume / cover / interview / gap calls
@@ -883,12 +891,15 @@ class MainWindow(QMainWindow):
         dlg = OutputLanguageDialog(
             default=default_lang,
             default_theme=self._state.docs_theme,
+            default_translate_positions=self._state.translate_positions,
             parent=self,
         )
         if dlg.exec() != QDialog.Accepted:
             return
         docs_lang = dlg.selected_language()
         self._state.docs_language = docs_lang
+        translate_positions = dlg.selected_translate_positions()
+        self._state.translate_positions = translate_positions
         # Resolve the random sentinel right here so every downstream
         # consumer (preview, save, export) renders with the same theme.
         from ..services.document_themes import RANDOM_THEME_SLUG, resolve_theme
@@ -924,6 +935,7 @@ class MainWindow(QMainWindow):
             resume = generate_tailored_resume(
                 provider, job, candidate_for_docs, answers, evidence.items,
                 output_language=docs_lang,
+                translate_positions=translate_positions,
             )
             cover = generate_cover_letter(
                 provider, job, candidate_for_docs, answers, output_language=docs_lang
@@ -1078,6 +1090,7 @@ class MainWindow(QMainWindow):
             generated_at=datetime.now(),
             output_language=self._state.docs_language or get_language(),
             output_theme=self._state.docs_theme or "teal_sidebar",
+            translate_positions=self._state.translate_positions,
         )
         self._state.package = package
         self._docs_page.load_package(package)
@@ -1346,6 +1359,7 @@ class MainWindow(QMainWindow):
             evidence_items = (
                 list(state.evidence.items) if state.evidence else []
             )
+            translate_positions = state.translate_positions
 
             def work():
                 return refine_tailored_resume(
@@ -1353,6 +1367,7 @@ class MainWindow(QMainWindow):
                     job, candidate, answers, evidence_items,
                     output_language=docs_lang,
                     previous_explanation=previous_explanation,
+                    translate_positions=translate_positions,
                 )
 
             def on_done(refined):
