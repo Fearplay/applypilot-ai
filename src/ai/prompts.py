@@ -300,6 +300,88 @@ def _candidate_has_linkedin_signal(candidate: CandidateProfile) -> bool:
     )
 
 
+def _position_translation_block(
+    output_language: str, translate_positions: bool
+) -> str:
+    """Build the prompt block that controls role-title language behaviour.
+
+    When ``translate_positions`` is ``True`` (the historical default) we
+    feed the AI explicit Czech<->English examples for common job titles so
+    it stops leaking source-language wording (e.g. ``"Vývojář Python"``
+    inside an otherwise English resume). When ``False`` we instead pin
+    the role title + company subtitle to the source language verbatim so
+    the user can keep e.g. ``"Senior Software QA Engineer"`` even on a
+    Czech resume - some users want the canonical English title for
+    international ATS pipelines.
+
+    The block is appended to ``resume_user_prompt`` and
+    ``refine_resume_user_prompt`` right next to the OUTPUT LANGUAGE
+    CONSISTENCY rules so the model picks it up as part of the same
+    contract.
+    """
+    code = (output_language or "en").strip().lower()
+    if not translate_positions:
+        return (
+            "POSITION TITLE EXCEPTION (HARD RULE - HIGHEST PRIORITY OVER OUTPUT LANGUAGE):\n"
+            "- The user explicitly asked us NOT to translate role titles or "
+            "company names. ResumeSection.title for `experience` and "
+            "`projects`, plus ResumeSection.subtitle for `experience` (the "
+            "company name with its employment-type decoration), MUST be "
+            "kept VERBATIM from CANDIDATE.experience[].title / "
+            "CANDIDATE.experience[].company / CANDIDATE.projects[].name "
+            "in the SOURCE language those fields use. Do NOT translate "
+            "them, paraphrase them, or replace them with their "
+            "OUTPUT_LANGUAGE equivalents. Example: if the CV says "
+            "'Senior Software QA Engineer' and OUTPUT_LANGUAGE is Czech, "
+            "the title on the resume is still 'Senior Software QA "
+            "Engineer' - NOT 'Senior softwarový QA inženýr'.\n"
+            "- The employment-type decoration on the subtitle (Internship "
+            "/ Stáž / Contract / Kontrakt / ...) ALSO follows this rule: "
+            "use the wording the candidate's CV / LinkedIn used.\n"
+            "- Bullets, professional_summary, periods (e.g. 'present' vs "
+            "'současnost'), education degrees, education institution "
+            "names, certification names and spoken_languages entries "
+            "STILL follow OUTPUT_LANGUAGE - this exception covers ONLY "
+            "experience / project TITLES and experience SUBTITLES.\n"
+        )
+    if code == "cs":
+        return (
+            "POSITION TITLE TRANSLATION EXAMPLES (the OUTPUT LANGUAGE "
+            "CONSISTENCY rule applies, here are concrete reminders):\n"
+            "- 'Software Engineer' -> 'Softwarový inženýr'\n"
+            "- 'Senior Software QA Engineer' -> 'Senior softwarový QA inženýr'\n"
+            "- 'Junior Developer' -> 'Junior vývojář'\n"
+            "- 'Frontend Developer' -> 'Frontendový vývojář'\n"
+            "- 'Backend Developer' -> 'Backendový vývojář'\n"
+            "- 'Data Analyst' -> 'Datový analytik'\n"
+            "- 'Project Manager' -> 'Projektový manažer'\n"
+            "- 'Product Manager' -> 'Produktový manažer'\n"
+            "- 'DevOps Engineer' -> 'DevOps inženýr'\n"
+            "- 'Internship' -> 'Stáž', 'Intern' -> 'Stážista'\n"
+            "Apply the same logic to every other role title. The Czech "
+            "form is the canonical resume entry; do NOT leave the "
+            "English original alongside it.\n"
+        )
+    return (
+        "POSITION TITLE TRANSLATION EXAMPLES (the OUTPUT LANGUAGE "
+        "CONSISTENCY rule applies, here are concrete reminders):\n"
+        "- 'Vývojář' -> 'Developer'\n"
+        "- 'Softwarový inženýr' -> 'Software Engineer'\n"
+        "- 'Senior softwarový QA inženýr' -> 'Senior Software QA Engineer'\n"
+        "- 'Junior vývojář' -> 'Junior Developer'\n"
+        "- 'Frontendový vývojář' -> 'Frontend Developer'\n"
+        "- 'Backendový vývojář' -> 'Backend Developer'\n"
+        "- 'Datový analytik' -> 'Data Analyst'\n"
+        "- 'Projektový manažer' -> 'Project Manager'\n"
+        "- 'Produktový manažer' -> 'Product Manager'\n"
+        "- 'DevOps inženýr' -> 'DevOps Engineer'\n"
+        "- 'Stáž' -> 'Internship', 'Stážista' -> 'Intern'\n"
+        "Apply the same logic to every other role title. The English "
+        "form is the canonical resume entry; do NOT leave the Czech "
+        "original alongside it.\n"
+    )
+
+
 def analyze_job_user_prompt(raw_text: str, source_url: str | None = None) -> str:
     return (
         "Extract a JobPosting from the raw posting below.\n"
@@ -546,8 +628,13 @@ def resume_user_prompt(
     answers: AnswersBundle,
     evidence: list[EvidenceItem],
     output_language: str = "en",
+    *,
+    translate_positions: bool = True,
 ) -> str:
     has_linkedin = bool((candidate.raw_linkedin_text or "").strip())
+    position_block = _position_translation_block(
+        output_language, translate_positions
+    )
     linkedin_block = (
         ""
         if has_linkedin
@@ -663,7 +750,8 @@ def resume_user_prompt(
         "- ONLY product / technology / brand names stay canonical: "
         "'Playwright', 'C#', 'Gen Digital', 'CI/CD'. Job titles, company "
         "subtitles, period strings and bullet prose all follow OUTPUT_LANGUAGE.\n"
-        "EMPLOYMENT TYPE:\n"
+        + position_block
+        + "EMPLOYMENT TYPE:\n"
         "- Use each WorkExperience.employment_type to decorate the role's "
         "subtitle: 'Internship', 'Contract', 'Part-time', 'Freelance', "
         "'Self-employed', 'Temporary'. Skip the decoration for 'full_time' "
@@ -835,8 +923,13 @@ def refine_resume_user_prompt(
     evidence: list[EvidenceItem],
     output_language: str = "en",
     previous_explanation: str = "",
+    *,
+    translate_positions: bool = True,
 ) -> str:
     has_linkedin = _candidate_has_linkedin_signal(candidate)
+    position_block = _position_translation_block(
+        output_language, translate_positions
+    )
     linkedin_block = (
         ""
         if has_linkedin
@@ -978,7 +1071,8 @@ def refine_resume_user_prompt(
         "biggest stars). Use ONLY that project's `name`, `description`, "
         "`readme_excerpt`, `detected_technologies`, `primary_language`, "
         "`stars` and `url` to write the resume bullet - never extrapolate.\n\n"
-        "INSTRUCTIONS:\n"
+        + position_block
+        + "INSTRUCTIONS:\n"
         "- Read the CURRENT RESUME below. It is a valid TailoredResume JSON.\n"
         "- Read the USER FEEDBACK carefully. Fix, add or rework exactly "
         "what the user asks for - and only that. Do not silently revert "

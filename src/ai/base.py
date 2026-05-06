@@ -89,8 +89,16 @@ class BaseAIProvider(ABC):
         answers: AnswersBundle,
         evidence: Sequence[EvidenceItem] = (),
         output_language: str = "en",
+        translate_positions: bool = True,
     ) -> TailoredResume:
-        """Generate the tailored ATS-friendly resume."""
+        """Generate the tailored ATS-friendly resume.
+
+        ``translate_positions`` toggles whether role titles + company
+        subtitles are translated into ``output_language`` (default
+        ``True``, matching historical behaviour) or kept verbatim from
+        the candidate input (``False``). Bullets, summary, periods and
+        education rows always follow ``output_language`` regardless.
+        """
 
     # ----------------------------------------------------------- cover ltr
     @abstractmethod
@@ -135,6 +143,7 @@ class BaseAIProvider(ABC):
         evidence: Sequence[EvidenceItem] = (),
         output_language: str = "en",
         previous_explanation: str = "",
+        translate_positions: bool = True,
     ) -> RefinedResume:
         """Re-generate the resume incorporating the user's feedback.
 
@@ -150,6 +159,10 @@ class BaseAIProvider(ABC):
         without this context, the AI would treat the bare 'ano' as a
         no-op and frustrate the user who is clearly responding to a
         question.
+
+        ``translate_positions`` mirrors the same flag on
+        :meth:`generate_resume` so the refine pass also honours the
+        user's "keep titles verbatim" preference.
         """
 
     # -------------------------------------------------------- refine cover
