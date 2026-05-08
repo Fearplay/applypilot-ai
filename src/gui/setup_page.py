@@ -20,7 +20,7 @@ import logging
 from pathlib import Path
 
 from PySide6.QtCore import QUrl, Qt, QThreadPool, Signal
-from PySide6.QtGui import QDesktopServices, QGuiApplication
+from PySide6.QtGui import QDesktopServices, QGuiApplication, QResizeEvent
 from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
@@ -58,6 +58,60 @@ logger = logging.getLogger(__name__)
 class _ProfileBuildResult:
     profile: CandidateProfile
     github_warning: str = ""
+
+
+class _ElidedLabel(QLabel):
+    """QLabel that elides on the right and never grows the parent layout.
+
+    A plain QLabel reports ``sizeHint() == naturalTextWidth()`` on the
+    horizontal axis. When the action bar status line displays a fetch
+    URL like ``Stahuji https://very/long/path...``, that 600+ px hint
+    propagates up the QHBoxLayout -> SetupPage -> QStackedWidget -> the
+    main window and forces the whole window to widen. The user reported
+    this exact behaviour: clicking *Fetch* with a long URL stretched
+    the app.
+
+    Two fixes layered together:
+
+    * ``QSizePolicy.Ignored`` horizontally - the layout no longer
+      considers our preferred width when computing the parent's minimum
+      size, so the window stays put.
+    * On every resize / setText we elide the visible text with
+      :func:`QFontMetrics.elidedText`, dropping the middle of the URL
+      into ``...``. The full untruncated text remains accessible as a
+      tooltip so power users hovering still see the original value.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._full_text: str = ""
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+
+    def setText(self, text: str) -> None:  # type: ignore[override]
+        self._full_text = text or ""
+        self.setToolTip(self._full_text)
+        self._render_elided()
+
+    def text(self) -> str:  # type: ignore[override]
+        return self._full_text
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._render_elided()
+
+    def _render_elided(self) -> None:
+        if not self._full_text:
+            super().setText("")
+            return
+        # Leave a small margin so the trailing "..." is never clipped.
+        max_width = max(0, self.width() - 4)
+        if max_width <= 0:
+            super().setText("")
+            return
+        elided = self.fontMetrics().elidedText(
+            self._full_text, Qt.ElideRight, max_width
+        )
+        super().setText(elided)
 
 
 class SetupPage(QWidget):
@@ -155,7 +209,7 @@ class SetupPage(QWidget):
         )
         bar_layout.addWidget(self._fresh_run_chk)
 
-        self._status_lbl = QLabel("")
+        self._status_lbl = _ElidedLabel()
         self._status_lbl.setStyleSheet(
             f"color: {Tokens.text_muted}; font-size: 12px;"
         )
