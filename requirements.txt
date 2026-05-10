@@ -17,6 +17,13 @@ beautifulsoup4>=4.12,<5.0
 trafilatura>=1.12,<2.0
 lxml>=5.0,<6.0
 
+# Native OS trust-store bridge for stdlib ``ssl`` so corporate / Windows
+# certificates work out of the box. Avoids ``CERTIFICATE_VERIFY_FAILED`` on
+# ``api.openai.com`` when ``certifi`` lacks the user's local CA. Activated
+# from ``app.py`` via ``truststore.inject_into_ssl()``; falls back silently
+# on Python < 3.10 or unsupported platforms.
+truststore~=0.10
+
 # Headless system-browser fallback for SPA career pages (Microsoft, Workday,
 # Greenhouse). The Python package is small; we drive the user's existing
 # Chrome / Edge installation through `channel="chrome"` / `channel="msedge"`,

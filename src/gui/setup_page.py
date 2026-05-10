@@ -277,6 +277,46 @@ class SetupPage(QWidget):
             extensions=(".pdf", ".txt", ".html", ".htm"),
         )
         card.add_widget(self._li_drop)
+
+        # ----- additional candidate notes (free-text + drop file)
+        # The label sits above its own subtitle so the user instantly sees
+        # this is OPTIONAL, what to type, and that they can drop a file
+        # which auto-fills the textarea below. The drop zone reuses the
+        # CV-style file kinds via parse_resume_file so PDF, DOCX and HTML
+        # exported from Notion / Word also work.
+        notes_label = QLabel(t("setup.profile.additional.label"))
+        notes_label.setStyleSheet(
+            f"color: {Tokens.text}; font-weight: 600; font-size: 13px; "
+            "padding-top: 4px;"
+        )
+        card.add_widget(notes_label)
+
+        notes_subtitle = QLabel(t("setup.profile.additional.subtitle"))
+        notes_subtitle.setWordWrap(True)
+        notes_subtitle.setStyleSheet(
+            f"color: {Tokens.text_muted}; font-size: 12px;"
+        )
+        card.add_widget(notes_subtitle)
+
+        self._notes_drop = FileDropZone(
+            t("setup.profile.additional.drop_label"),
+            extensions=(".pdf", ".docx", ".txt", ".md", ".html", ".htm"),
+        )
+        # Drop / browse populates the textarea below via parse_resume_file
+        # (same parser as the CV drop, supports PDF / DOCX / HTML / TXT / MD)
+        # so the user always sees and can edit what the AI will read.
+        self._notes_drop.file_selected.connect(self._on_notes_file_selected)
+        card.add_widget(self._notes_drop)
+
+        self._notes_edit = QPlainTextEdit()
+        self._notes_edit.setPlaceholderText(
+            t("setup.profile.additional.notes_placeholder")
+        )
+        self._notes_edit.setMinimumHeight(140)
+        self._notes_edit.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Expanding
+        )
+        card.add_widget(self._notes_edit)
         return card
 
     def _build_github_card(self) -> SectionCard:
@@ -317,6 +357,7 @@ class SetupPage(QWidget):
         cv: Path | str | None = None,
         linkedin: Path | str | None = None,
         github_profile_url: str | None = None,
+        additional_notes: str | None = None,
     ) -> None:
         if job_text is not None:
             self._desc.setPlainText(job_text)
@@ -330,6 +371,8 @@ class SetupPage(QWidget):
         if github_profile_url:
             self._gh_url.setText(github_profile_url)
             self._gh_skip.setChecked(False)
+        if additional_notes is not None:
+            self._notes_edit.setPlainText(additional_notes)
 
     def set_status(self, text: str) -> None:
         self._status_lbl.setText(text)
@@ -540,6 +583,58 @@ class SetupPage(QWidget):
             return ""
         return extract_username(self._gh_url.text())
 
+    def _on_notes_file_selected(self, path: Path) -> None:
+        """Parse the dropped notes file in the background and fill the textarea.
+
+        Reuses :func:`parse_resume_file` so PDF / DOCX / HTML / TXT / MD all
+        work, mirroring the CV drop zone. The file is just a SOURCE of text -
+        whatever lands in ``self._notes_edit`` is the single source of truth
+        the AI eventually sees, so the user can freely edit / extend the
+        parsed text after the drop. Parse failures surface in the status bar
+        instead of blocking the run; the user can still type manually.
+        """
+        self.set_status(t("setup.profile.additional.parsing", name=path.name))
+
+        def work() -> str:
+            return parse_resume_file(path)
+
+        def on_done(text: str) -> None:
+            cleaned = (text or "").strip()
+            if not cleaned:
+                self.set_status(
+                    t(
+                        "setup.profile.additional.parse_failed",
+                        name=path.name,
+                        error="empty document",
+                    )
+                )
+                return
+            self._notes_edit.setPlainText(cleaned)
+            self.set_status(
+                t(
+                    "setup.profile.additional.parsed",
+                    name=path.name,
+                    chars=len(cleaned),
+                )
+            )
+
+        def on_failed(message: str) -> None:
+            logger.warning("Failed to parse additional notes file: %s", message)
+            self.set_status(
+                t(
+                    "setup.profile.additional.parse_failed",
+                    name=path.name,
+                    error=message,
+                )
+            )
+
+        run_in_background(
+            self._pool,
+            work,
+            on_finished=on_done,
+            on_failed=on_failed,
+        )
+
     def _on_run_clicked(self) -> None:
         text = self._desc.toPlainText().strip()
         if not text:
@@ -559,6 +654,12 @@ class SetupPage(QWidget):
                 t("setup.error.no_candidate.body"),
             )
             return
+        # Capture the user-typed notes verbatim. They feed every downstream
+        # AI prompt (analyze_candidate, match report, resume, cover letter,
+        # refine) via CandidateProfile.additional_notes so a one-line
+        # clarification like "didn't finish bachelor's" is honoured by every
+        # generator without needing a clarifying-question round-trip.
+        notes_text = self._notes_edit.toPlainText().strip()
 
         self.set_busy(True)
         self.set_status(t("setup.status.analysing"))
@@ -573,11 +674,20 @@ class SetupPage(QWidget):
         run_in_background(
             self._pool,
             work,
-            on_finished=lambda job: self._on_job_parsed(job, cv_path, li_path, gh_user),
+            on_finished=lambda job: self._on_job_parsed(
+                job, cv_path, li_path, gh_user, notes_text
+            ),
             on_failed=self._on_pipeline_failed,
         )
 
-    def _on_job_parsed(self, job: JobPosting, cv_path, li_path, gh_user: str) -> None:
+    def _on_job_parsed(
+        self,
+        job: JobPosting,
+        cv_path,
+        li_path,
+        gh_user: str,
+        additional_notes: str = "",
+    ) -> None:
         self._parsed_job = job
         self.job_parsed.emit(job)
         self.set_status(
@@ -610,6 +720,7 @@ class SetupPage(QWidget):
                 linkedin_text=li_text,
                 github_username=gh_user or None,
                 github_projects=projects,
+                additional_notes=additional_notes,
             )
             return _ProfileBuildResult(profile=profile, github_warning=github_warning)
 

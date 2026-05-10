@@ -85,6 +85,7 @@ pyinstaller ^
     --collect-all PySide6 ^
     --collect-all playwright ^
     --collect-all keyring ^
+    --collect-all truststore ^
     --hidden-import keyring.backends.Windows ^
     --hidden-import keyring.backends.macOS ^
     --hidden-import keyring.backends.SecretService ^

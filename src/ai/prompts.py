@@ -300,6 +300,44 @@ def _candidate_has_linkedin_signal(candidate: CandidateProfile) -> bool:
     )
 
 
+def _additional_notes_block(candidate: CandidateProfile) -> str:
+    """Return the downstream-prompt block that surfaces user-typed notes.
+
+    Returns an empty string when ``candidate.additional_notes`` is empty,
+    so callers can unconditionally concatenate the block into their prompt
+    without an extra ``if`` ladder. The block intentionally repeats the
+    USER-AUTHORITATIVE rule because each prompt is a self-contained
+    instruction to the model and we cannot rely on context from
+    ``analyze_candidate``: by the time we reach match-report / resume /
+    cover-letter / refine, the AI sees only ``CandidateProfile`` JSON +
+    this prompt.
+    """
+    notes = (getattr(candidate, "additional_notes", "") or "").strip()
+    if not notes:
+        return ""
+    trimmed = _trim(notes, limit=4000)
+    return (
+        "CANDIDATE ADDITIONAL NOTES (USER-AUTHORITATIVE - HARD RULE):\n"
+        "- The candidate typed these clarifications in their own words. "
+        "They may be in Czech, English or a mix. Read both languages "
+        "natively.\n"
+        "- Treat them as ground truth. When they contradict CV / "
+        "LinkedIn / GitHub data (e.g. 'I finished college in 2023 "
+        "without the bachelor's title', 'I want to start part-time "
+        "because I plan a career change soon', 'at my last role I led "
+        "the migration to Playwright'), the NOTES win - reflect them in "
+        "your output.\n"
+        "- Do NOT mention 'the user said' or 'according to the notes' in "
+        "any user-facing text - integrate the facts naturally in "
+        "OUTPUT_LANGUAGE so the resume / cover letter / report read as "
+        "first-person career story, not a quoted dialogue.\n"
+        "- Never invent facts that go BEYOND what the notes literally "
+        "say. If the notes only mention 'no bachelor's title', do NOT "
+        "extrapolate 'dropped out due to financial reasons' or similar.\n\n"
+        f"NOTES TEXT:\n{trimmed}\n\n"
+    )
+
+
 def _position_translation_block(
     output_language: str, translate_positions: bool
 ) -> str:
@@ -405,12 +443,42 @@ def analyze_candidate_user_prompt(
     linkedin_text: str,
     github_username: str | None,
     github_projects: list[Any],
+    additional_notes: str = "",
 ) -> str:
     projects_json = json.dumps(
         [p.model_dump(mode="json") if hasattr(p, "model_dump") else p for p in github_projects],
         ensure_ascii=False,
         indent=2,
     )
+    notes_clean = (additional_notes or "").strip()
+    notes_block = ""
+    if notes_clean:
+        notes_block = (
+            "ADDITIONAL CANDIDATE NOTES (USER-AUTHORITATIVE - HARD RULE):\n"
+            "* The candidate typed these clarifications themselves on the "
+            "Setup page. They may be written in Czech, English or both.\n"
+            "* Treat them as ground truth. When they contradict CV / "
+            "LinkedIn (e.g. CV says 'Bachelor in Informatics 2019-2023' "
+            "but the notes say 'school ended in 2023, no bachelor's "
+            "title'), the NOTES win - update the EducationEntry: keep "
+            "institution + period, set degree to '' if no degree was "
+            "earned, and put the user's clarification verbatim into "
+            "`notes`.\n"
+            "* Promote concrete facts: dates, employment_type "
+            "('part-time' / 'stáž' / 'OSVČ'), promotion timing, "
+            "responsibilities at past roles, motivation for the "
+            "application, availability constraints (full-time vs "
+            "part-time).\n"
+            "* DO NOT invent anything that is not literally in the notes "
+            "or the other inputs.\n"
+            "* MANDATORY: copy the notes text VERBATIM into the returned "
+            "`CandidateProfile.additional_notes` field, regardless of "
+            "any other edits you derive from them. Downstream prompts "
+            "(match report, resume, cover letter, refine) re-read this "
+            "field directly so it MUST contain the user's original "
+            "wording, not a paraphrase.\n\n"
+            f"NOTES TEXT:\n{_trim(notes_clean, limit=4000)}\n\n"
+        )
     return (
         "Build a CandidateProfile by merging the inputs below. Only include "
         "facts that appear in the inputs. Skills must be deduplicated.\n\n"
@@ -534,7 +602,8 @@ def analyze_candidate_user_prompt(
         "merge a Junior into a Senior just because the company name "
         "now appears inside the new role's subtitle.\n\n"
         f"GITHUB USERNAME: {github_username or '(none provided)'}\n\n"
-        "CV TEXT:\n" + _trim(cv_text) + "\n\n"
+        + notes_block
+        + "CV TEXT:\n" + _trim(cv_text) + "\n\n"
         "LINKEDIN TEXT:\n" + _trim(linkedin_text) + "\n\n"
         "GITHUB PROJECTS (already fetched, do NOT invent more):\n" + projects_json
     )
@@ -571,9 +640,14 @@ def clarifying_questions_user_prompt(
         "used X?', 'Briefly describe Y.' If you can phrase the same "
         "question as Yes/No, do that instead.\n"
         "- options must NEVER be empty when answer_type is yes_no, "
-        "single_choice or multi_choice.\n\n"
+        "single_choice or multi_choice.\n"
+        "- If `candidate.additional_notes` already answers a skill (e.g. "
+        "the user wrote 'I have part-time experience with Playwright'), "
+        "DO NOT generate a clarifying question for that skill. Use the "
+        "notes as evidence and skip ahead to the next gap.\n\n"
         "JOB:\n" + _dump_job(job) + "\n\n"
         "CANDIDATE:\n" + _dump(candidate) + "\n\n"
+        + _additional_notes_block(candidate)
         + _language_directive(output_language)
     )
 
@@ -591,6 +665,18 @@ def match_report_user_prompt(
         "skills the candidate has not demonstrated. If a user answer arrived "
         "in a different language than OUTPUT_LANGUAGE, translate it - do not "
         "drop or fabricate detail.\n\n"
+        "ADDITIONAL NOTES IMPACT (HARD RULE):\n"
+        "- When the candidate's `additional_notes` declares an "
+        "availability constraint ('part-time only', 'looking for a "
+        "career change'), do NOT count it as a missing requirement and "
+        "do NOT lower the technical score because of it. Mention it in "
+        "`summary` and `recommended_improvements` so the user can decide "
+        "whether to pursue this opening, but never silently penalise "
+        "for a stated preference.\n"
+        "- When the notes correct a fact (no degree earned, role "
+        "rebrand, different period), use the corrected version when "
+        "scoring matched / missing requirements - the notes override "
+        "the CV / LinkedIn content for evidence purposes.\n\n"
         "SUGGESTED REMOVALS (irrelevant rows):\n"
         "- Populate `suggested_removals` with WorkExperience or EducationEntry "
         "rows from CANDIDATE that you judge UNRELATED to this specific job - "
@@ -616,7 +702,8 @@ def match_report_user_prompt(
         "the right answer when every row plausibly belongs.\n\n"
         "JOB:\n" + _dump_job(job) + "\n\n"
         "CANDIDATE:\n" + _dump(candidate) + "\n\n"
-        "USER ANSWERS:\n" + _dump(answers) + "\n\n"
+        + _additional_notes_block(candidate)
+        + "USER ANSWERS:\n" + _dump(answers) + "\n\n"
         "EVIDENCE:\n" + _dump(evidence) + "\n\n"
         + _language_directive(output_language)
     )
@@ -654,6 +741,21 @@ def resume_user_prompt(
     return (
         "Produce a TailoredResume in the schema. Tailor it to the job:\n"
         + linkedin_block
+        + "ADDITIONAL NOTES IMPACT (HARD RULE):\n"
+        "- Treat `candidate.additional_notes` as USER-AUTHORITATIVE - it "
+        "OVERRIDES CV / LinkedIn data when they conflict (degree status, "
+        "dates, employment_type, responsibilities at past roles).\n"
+        "- Examples: notes 'school ended 2023, no bachelor's title' "
+        "-> education entry keeps institution + period but degree is "
+        "empty and bullets reflect the field of study without claiming "
+        "a degree. Notes 'led Playwright migration at Avast' -> add "
+        "that bullet to the matching WorkExperience entry only if the "
+        "company name matches; otherwise treat it as additional context "
+        "for the summary / cover letter rather than fabricating a new "
+        "row.\n"
+        "- Never quote the notes literally in the resume. Integrate the "
+        "facts naturally in OUTPUT_LANGUAGE so the resume reads as a "
+        "first-person career story, not a transcript.\n"
         + "- Reorder skills so the most relevant for the job are first.\n"
         "- Rewrite bullet points to use ATS keywords from the job - but ONLY "
         "if they reflect actual evidence (CV / LinkedIn / GitHub / user "
@@ -835,7 +937,8 @@ def resume_user_prompt(
         "fabrication, no exaggeration.\n\n"
         "JOB:\n" + _dump_job(job) + "\n\n"
         "CANDIDATE:\n" + _dump(candidate) + "\n\n"
-        "USER ANSWERS:\n" + _dump(answers) + "\n\n"
+        + _additional_notes_block(candidate)
+        + "USER ANSWERS:\n" + _dump(answers) + "\n\n"
         "EVIDENCE:\n" + _dump(evidence) + "\n\n"
         + _language_directive(output_language)
     )
@@ -852,6 +955,21 @@ def cover_letter_user_prompt(
         "role, 3-4 paragraphs maximum. Reference at most TWO real "
         "achievements / projects from the candidate. Salutation, body and "
         "closing must all sit inside the same OUTPUT_LANGUAGE.\n\n"
+        "ADDITIONAL NOTES IMPACT (HARD RULE):\n"
+        "- When `candidate.additional_notes` declares motivation ('I'm "
+        "very interested in this position'), an availability constraint "
+        "('want to start part-time, planning a career change'), a "
+        "missing-degree clarification, or any first-person context the "
+        "CV / LinkedIn does NOT carry, you MUST surface it in ONE "
+        "dedicated paragraph - typically the second or third. Phrase it "
+        "in OUTPUT_LANGUAGE as the candidate's own voice (first person), "
+        "never paste the notes verbatim.\n"
+        "- Be honest: don't gloss over a part-time preference or a "
+        "missing degree. State it briefly and reframe it as confidence "
+        "('I'd like to start part-time and grow into the role', not "
+        "'unfortunately I can only do part-time').\n"
+        "- Never invent extra context that goes BEYOND what the notes "
+        "literally say.\n\n"
         "STRUCTURE RULES (HARD - violations will be stripped before save):\n"
         "- Do NOT include a heading line such as 'Cover letter for X at Y' "
         "or any role-and-company title at the top. The first content the "
@@ -871,7 +989,8 @@ def cover_letter_user_prompt(
         "NOT end with a sign-off phrase.\n\n"
         "JOB:\n" + _dump_job(job) + "\n\n"
         "CANDIDATE:\n" + _dump(candidate) + "\n\n"
-        "USER ANSWERS:\n" + _dump(answers) + "\n\n"
+        + _additional_notes_block(candidate)
+        + "USER ANSWERS:\n" + _dump(answers) + "\n\n"
         + _language_directive(output_language)
     )
 
@@ -888,9 +1007,16 @@ def interview_questions_user_prompt(
         "candidate's profile. Keep a balance between technical, behavioural, "
         "process and culture categories. The category enum stays in English "
         "('technical' etc.); question, why_asked and suggested_answer follow "
-        "OUTPUT_LANGUAGE.\n\n"
+        "OUTPUT_LANGUAGE.\n"
+        "- If `candidate.additional_notes` mentions an availability "
+        "preference (part-time, career change), motivation or a "
+        "missing-degree clarification, weave them into the relevant "
+        "suggested_answer so the candidate has rehearsed phrasing ready "
+        "for tough questions like 'why this role?' / 'why part-time?' / "
+        "'why didn't you finish your degree?'.\n\n"
         "JOB:\n" + _dump_job(job) + "\n\n"
         "CANDIDATE:\n" + _dump(candidate) + "\n\n"
+        + _additional_notes_block(candidate)
         + _language_directive(output_language)
     )
 
@@ -1092,7 +1218,8 @@ def refine_resume_user_prompt(
         "CANDIDATE:\n"
         + _dump(candidate, exclude=_REFINE_CANDIDATE_PROMPT_EXCLUDE)
         + "\n\n"
-        "USER ANSWERS:\n" + _dump(answers) + "\n\n"
+        + _additional_notes_block(candidate)
+        + "USER ANSWERS:\n" + _dump(answers) + "\n\n"
         "EVIDENCE:\n" + _dump(evidence) + "\n\n"
         + _language_directive(output_language)
     )
@@ -1214,7 +1341,8 @@ def refine_cover_letter_user_prompt(
         "USER FEEDBACK:\n" + feedback.strip() + "\n\n"
         "JOB:\n" + _dump_job(job) + "\n\n"
         "CANDIDATE:\n" + _dump(candidate) + "\n\n"
-        "USER ANSWERS:\n" + _dump(answers) + "\n\n"
+        + _additional_notes_block(candidate)
+        + "USER ANSWERS:\n" + _dump(answers) + "\n\n"
         + _language_directive(output_language)
     )
 

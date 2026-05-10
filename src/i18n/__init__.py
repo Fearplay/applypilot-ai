@@ -118,6 +118,30 @@ _STRINGS: dict[str, dict[str, str]] = {
         "setup.profile.subtitle": "Drop your CV (required) and optionally a LinkedIn export.",
         "setup.profile.cv_label": "CV (PDF / DOCX / TXT / HTML) - required",
         "setup.profile.linkedin_label": "LinkedIn export (PDF / TXT / HTML) - optional",
+        "setup.profile.additional.label": "Additional info (optional)",
+        "setup.profile.additional.subtitle": (
+            "Anything the AI cannot read from your CV - in your own words. "
+            "Drop a .txt / .md / .pdf / .docx / .html file to fill the box "
+            "below, or just type. Both Czech and English are understood."
+        ),
+        "setup.profile.additional.drop_label": (
+            "Drop a notes file (.txt / .md / .pdf / .docx / .html) - optional"
+        ),
+        "setup.profile.additional.notes_placeholder": (
+            "Examples:\n"
+            "- I finished university in 2023, but did not earn the bachelor's title.\n"
+            "- I'm very interested in this position, but I'd like to start "
+            "part-time because I plan a career change soon.\n"
+            "- At my previous role I led the migration to Playwright and "
+            "mentored two juniors (the CV doesn't mention this)."
+        ),
+        "setup.profile.additional.parsing": "Reading {name}...",
+        "setup.profile.additional.parsed": (
+            "Loaded {chars} characters from {name} - edit below if needed."
+        ),
+        "setup.profile.additional.parse_failed": (
+            "Could not read {name}: {error}"
+        ),
         "setup.github.title": "GitHub profile",
         "setup.github.subtitle": (
             "Paste your GitHub profile URL and the app will fetch your "
@@ -689,6 +713,30 @@ _STRINGS: dict[str, dict[str, str]] = {
         "setup.profile.subtitle": "Přetáhni svůj životopis (povinné) a volitelně export z LinkedInu.",
         "setup.profile.cv_label": "Životopis (PDF / DOCX / TXT / HTML) - povinné",
         "setup.profile.linkedin_label": "LinkedIn export (PDF / TXT / HTML) - volitelné",
+        "setup.profile.additional.label": "Doplňující informace (volitelné)",
+        "setup.profile.additional.subtitle": (
+            "Co AI nemůže vyčíst ze životopisu - vlastními slovy. Přetáhni "
+            "soubor .txt / .md / .pdf / .docx / .html pro vyplnění pole "
+            "níže, nebo rovnou piš. Funguje v češtině i angličtině."
+        ),
+        "setup.profile.additional.drop_label": (
+            "Přetáhni soubor s poznámkami (.txt / .md / .pdf / .docx / .html) - volitelné"
+        ),
+        "setup.profile.additional.notes_placeholder": (
+            "Příklady:\n"
+            "- Vysokou školu jsem ukončil v roce 2023 bez titulu bakaláře.\n"
+            "- O tuto pozici mám velký zájem, ale chci nastoupit na "
+            "part-time, protože brzy plánuji změnu kariérní cesty.\n"
+            "- Na minulé pozici jsem vedl migraci na Playwright a mentoroval "
+            "dva juniory (v CV to není)."
+        ),
+        "setup.profile.additional.parsing": "Čtu {name}...",
+        "setup.profile.additional.parsed": (
+            "Načteno {chars} znaků z {name} - níže můžeš text upravit."
+        ),
+        "setup.profile.additional.parse_failed": (
+            "Soubor {name} se nepovedlo načíst: {error}"
+        ),
         "setup.github.title": "GitHub profil",
         "setup.github.subtitle": (
             "Vlož URL svého GitHub profilu a aplikace si automaticky stáhne "
