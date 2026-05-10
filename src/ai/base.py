@@ -43,6 +43,7 @@ class BaseAIProvider(ABC):
         linkedin_text: str = "",
         github_username: str | None = None,
         github_projects: Sequence[GitHubProject] = (),
+        additional_notes: str = "",
     ) -> CandidateProfile:
         """Merge raw candidate inputs into a structured CandidateProfile.
 
@@ -50,6 +51,14 @@ class BaseAIProvider(ABC):
         :func:`src.services.github_analyzer.fetch_github_projects` (already
         fetched, structured metadata). Providers must not invent additional
         repositories - only the items in this list exist.
+
+        ``additional_notes`` is free-text the user typed (or pasted from a
+        notes file) on the Setup page. Implementations MUST treat it as
+        authoritative just like clarifying-question answers and copy it
+        verbatim onto :attr:`CandidateProfile.additional_notes` so every
+        downstream prompt (match report, resume, cover letter, refine)
+        keeps seeing the same context. May be written in Czech, English
+        or a mix.
         """
 
     # --------------------------------------------------------- clarifying Q

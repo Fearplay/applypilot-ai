@@ -518,6 +518,7 @@ class FakeAIProvider(BaseAIProvider):
         linkedin_text: str = "",
         github_username: str | None = None,
         github_projects: Sequence[GitHubProject] = (),
+        additional_notes: str = "",
     ) -> CandidateProfile:
         combined = "\n".join([cv_text or "", linkedin_text or ""])
 
@@ -553,6 +554,22 @@ class FakeAIProvider(BaseAIProvider):
 
         skills = list(dict.fromkeys(s.strip() for s in skills if s.strip()))
 
+        education_entries = self._fake_education(combined)
+        # Drobná offline heuristika: když poznámky výslovně říkají, že
+        # uživatel školu nedokončil bez titulu, anotujeme to do
+        # ``EducationEntry.notes`` u nejbližšího existujícího řádku, aby i
+        # demo režim viditelně reagoval na ``additional_notes`` (real AI
+        # pak udělá stejné rozhodnutí s vlastními slovy uživatele).
+        cleaned_notes = (additional_notes or "").strip()
+        if cleaned_notes and education_entries:
+            lowered = cleaned_notes.lower()
+            if (
+                ("bez titulu" in lowered or "without a bachelor" in lowered
+                 or "without bachelor" in lowered or "no bachelor" in lowered
+                 or "bez bakal" in lowered or "did not finish" in lowered)
+            ):
+                education_entries[0].notes = cleaned_notes
+
         return CandidateProfile(
             full_name=full_name,
             headline="" if not skills else f"{ROLE_TYPE_LABELS.get('other_it', 'IT professional')} - {', '.join(skills[:3])}",
@@ -578,11 +595,12 @@ class FakeAIProvider(BaseAIProvider):
                                                       "github actions"}],
             spoken_languages=["English"],
             experience=self._fake_experience(combined),
-            education=self._fake_education(combined),
+            education=education_entries,
             certifications=[],
             projects=list(github_projects or []),
             raw_cv_text=cv_text,
             raw_linkedin_text=linkedin_text,
+            additional_notes=cleaned_notes,
             github_username=github_username,
         )
 

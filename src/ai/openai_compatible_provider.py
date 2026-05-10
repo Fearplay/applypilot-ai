@@ -485,12 +485,26 @@ class OpenAICompatibleProvider(BaseAIProvider):
         linkedin_text: str = "",
         github_username: str | None = None,
         github_projects: Sequence[GitHubProject] = (),
+        additional_notes: str = "",
     ) -> CandidateProfile:
         system = prompts.system_prompt_for("other_it")
         user = prompts.analyze_candidate_user_prompt(
-            cv_text, linkedin_text, github_username, list(github_projects)
+            cv_text,
+            linkedin_text,
+            github_username,
+            list(github_projects),
+            additional_notes=additional_notes,
         )
-        return self._run("analyze_candidate", system, user, CandidateProfile)
+        result = self._run("analyze_candidate", system, user, CandidateProfile)
+        # Defensive copy: even though the prompt explicitly tells the model
+        # to copy the notes verbatim into the profile, providers occasionally
+        # drop the field (especially on json_object fallback paths). Always
+        # restore the verbatim user text so downstream prompts re-read it
+        # consistently.
+        cleaned = (additional_notes or "").strip()
+        if cleaned and not (result.additional_notes or "").strip():
+            object.__setattr__(result, "additional_notes", cleaned)
+        return result
 
     def generate_clarifying_questions(
         self,

@@ -138,6 +138,20 @@ class CandidateProfile(BaseModel):
 
     raw_cv_text: str = Field(default="", description="Verbatim text extracted from CV.")
     raw_linkedin_text: str = Field(default="", description="Verbatim text from LinkedIn export.")
+    additional_notes: str = Field(
+        default="",
+        description=(
+            "Free-text candidate clarifications typed in the Setup page or "
+            "loaded from a .txt / .md / .pdf / .docx / .html drop zone. The "
+            "AI must treat these as authoritative just like clarifying-"
+            "question answers and let them OVERRIDE CV / LinkedIn facts when "
+            "they conflict (degree completion, employment availability, "
+            "career-change motivation, missing dates, etc.). Persisted into "
+            "the saved analysis package so a later 'Refine with AI' run "
+            "still sees the same context. May be written in Czech, English "
+            "or a mix of both."
+        ),
+    )
     github_username: str | None = None
     github_repo_urls: list[str] = Field(
         default_factory=list,
